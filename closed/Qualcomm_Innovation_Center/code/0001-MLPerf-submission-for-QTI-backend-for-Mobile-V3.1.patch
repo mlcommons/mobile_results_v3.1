@@ -1,0 +1,4014 @@
+From bccb0bd162c737f5d1aad9ee6c0e32922af8ebe8 Mon Sep 17 00:00:00 2001
+From: Mohit Mundhra <quic_mmundhra@quicinc.com>
+Date: Mon, 4 Sep 2023 11:54:19 +0530
+Subject: [PATCH] MLPerf submission for QTI backend for Mobile-V3.1
+
+Co-authored-by: Utkarsh Mishra <quic_utkarshm@quicinc.com>
+Co-authored-by: Aasheesh Tiwari <quic_aasheesh@quicinc.com>
+Co-authored-by: Mohit Mundhra <quic_mmundhra@quicinc.com>
+---
+ datasets/Makefile                             |   2 +-
+ datasets/docker/Dockerfile                    |   2 +-
+ datasets/util/squad/convert.py                |   5 +-
+ flutter/android/android-docker.mk             |  10 +-
+ flutter/android/android.mk                    |   2 +-
+ flutter/android/docker/Dockerfile             |   4 +-
+ flutter/cpp/binary/cmdline-docker.mk          |   2 +-
+ flutter/cpp/binary/cmdline.mk                 |   1 +
+ flutter/flutter.mk                            |   2 +-
+ flutter/tool/generate-apk-filename.sh         |   1 +
+ mobile_back_qti/BUILD                         |  40 +--
+ mobile_back_qti/DLC/Makefile                  | 339 ++++++------------
+ mobile_back_qti/README.md                     |  29 +-
+ mobile_back_qti/cpp/backend_qti/BUILD         |   5 +-
+ mobile_back_qti/cpp/backend_qti/allocator.h   |  17 +-
+ .../cpp/backend_qti/mlperf_helper.h           |  28 +-
+ .../cpp/backend_qti/qti_backend_helper.cc     | 179 +++++----
+ .../cpp/backend_qti/qti_backend_helper.h      |  22 +-
+ mobile_back_qti/cpp/backend_qti/qti_c.cc      |  31 +-
+ .../cpp/backend_qti/qti_settings.h            |   6 +
+ .../settings/qti_settings_default_cpu.pbtxt   |  29 +-
+ .../settings/qti_settings_default_dsp.pbtxt   |  28 +-
+ .../settings/qti_settings_default_gpu.pbtxt   |  51 +--
+ .../settings/qti_settings_gpufp16.pbtxt       | 152 ++++++++
+ .../settings/qti_settings_sd7cxg3.pbtxt       | 161 +++++++++
+ .../settings/qti_settings_sd7g1.pbtxt         |  32 +-
+ .../settings/qti_settings_sd7pg2.pbtxt        |  30 +-
+ .../settings/qti_settings_sd8cxg3.pbtxt       |  32 +-
+ .../settings/qti_settings_sd8g1.pbtxt         |  30 +-
+ .../settings/qti_settings_sd8g2.pbtxt         |  32 +-
+ .../settings/qti_settings_sd8pg1.pbtxt        |  30 +-
+ .../settings/qti_settings_sdm778.pbtxt        |  30 +-
+ .../settings/qti_settings_sdm888.pbtxt        |  30 +-
+ .../settings/qti_settings_sm4450.pbtxt        | 213 +++++++++++
+ .../cpp/backend_qti/soc_utility.cc            |  47 ++-
+ mobile_back_qti/cpp/backend_qti/soc_utility.h |  12 +-
+ .../docker/mlperf_dlc_prepare/Dockerfile      |  26 ++
+ .../docker/mlperf_mosaic/Dockerfile           |  28 +-
+ .../docker/mlperf_snusr/Dockerfile            |  76 +---
+ mobile_back_qti/make/qti_backend.mk           |  61 ++--
+ .../make/qti_docker_intialization.mk          |  21 ++
+ mobile_back_qti/run_accuracy_tests.bat        |  14 +-
+ mobile_back_qti/run_accuracy_tests.sh         |  14 +-
+ mobile_back_qti/run_performance_tests.bat     |  14 +-
+ mobile_back_qti/run_performance_tests.sh      |  14 +-
+ mobile_back_qti/variables.bzl                 |  10 +-
+ 46 files changed, 1227 insertions(+), 717 deletions(-)
+ create mode 100644 mobile_back_qti/cpp/backend_qti/settings/qti_settings_gpufp16.pbtxt
+ create mode 100644 mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7cxg3.pbtxt
+ create mode 100644 mobile_back_qti/cpp/backend_qti/settings/qti_settings_sm4450.pbtxt
+ create mode 100644 mobile_back_qti/docker/mlperf_dlc_prepare/Dockerfile
+ create mode 100644 mobile_back_qti/make/qti_docker_intialization.mk
+
+diff --git a/datasets/Makefile b/datasets/Makefile
+index 91e9cbd..d70d3ee 100644
+--- a/datasets/Makefile
++++ b/datasets/Makefile
+@@ -105,7 +105,7 @@ ${BUILDDIR}/downloads/v2.3.0.zip:
+ ${BUILDDIR}/output/state/mlperf_docker_1.1.stamp:
+ 	# Building mlperf_mobile docker
+ 	mkdir -p ${BUILDDIR}/output/state
+-	docker image build -t mlperf_mobile:1.1 $(dir $(abspath ${ROOTDIR}/datasets/docker/Dockerfile))
++	docker image build ${internal_docker_option} -t mlperf_mobile:1.1 $(dir $(abspath ${ROOTDIR}/datasets/docker/Dockerfile))
+ 	touch $@
+ 
+ # No preprocessing is applied to the files
+diff --git a/datasets/docker/Dockerfile b/datasets/docker/Dockerfile
+index 09b6f72..1df46c5 100644
+--- a/datasets/docker/Dockerfile
++++ b/datasets/docker/Dockerfile
+@@ -15,7 +15,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
+ 
+ RUN pip3 install pip==19.3.1 setuptools==31.0.1
+ RUN pip3 install tensorflow-cpu==1.15
+-RUN pip3 install Pillow opencv-python setuptools matplotlib tensorflow_hub tf-slim \
++RUN pip3 install Pillow opencv-python==4.3.0.38 setuptools matplotlib tensorflow_hub tf-slim \
+                  absl-py numpy pyyaml
+ 
+ RUN ln -s /usr/bin/python3 /usr/bin/python
+diff --git a/datasets/util/squad/convert.py b/datasets/util/squad/convert.py
+index f52ab9c..29bad4b 100644
+--- a/datasets/util/squad/convert.py
++++ b/datasets/util/squad/convert.py
+@@ -60,15 +60,18 @@ def main():
+         input_ids = single_sample["input_ids"]
+         segment_ids = single_sample["segment_ids"]
+         np_mask = np.asarray(input_mask).astype(np.float32)
++        file_name_1_prefix = "input_mask:0:="
+         file_name_1 = "input_mask_{}.raw".format(i)
+         np_mask.astype(np.float32).tofile(os.path.join(args.output_dir,file_name_1))
+         np_ids = np.asarray(input_ids).astype(np.float32)
++        file_name_2_prefix = "bert/embeddings/ExpandDims:0:="
+         file_name_2 = "input_ids_{}.raw".format(i)
+         np_ids.astype(np.float32).tofile(os.path.join(args.output_dir,file_name_2))
+         np_segment = np.asarray(segment_ids).astype(np.float32)
++        file_name_3_prefix = "segment_ids:0:="
+         file_name_3 = "segment_ids_{}.raw".format(i)
+         np_segment.astype(np.float32).tofile(os.path.join(args.output_dir,file_name_3))
+-        file.write("{} {} {}\n".format(file_name_2,file_name_1,file_name_3))
++        file.write("{} {} {}\n".format(file_name_2_prefix + file_name_2,file_name_1_prefix + file_name_1,file_name_3_prefix + file_name_3))
+     file.close()
+ 
+ if __name__=="__main__":
+diff --git a/flutter/android/android-docker.mk b/flutter/android/android-docker.mk
+index a84a974..338eccd 100644
+--- a/flutter/android/android-docker.mk
++++ b/flutter/android/android-docker.mk
+@@ -16,10 +16,18 @@
+ DOCKER_IMAGE_TAG?=mlcommons/mlperf_mobile_flutter
+ 
+ flutter_docker_postfix=$(shell id -u)
++
++ifeq (${WITH_INTERNAL_DOCKER_OPTION},1)
++host_ip=$(shell nslookup docker-registry.qualcomm.com | grep -n Address | grep ^8 | cut -c12-)
++internal_docker_option=--add-host=docker:${host_ip}
++else
++internal_docker_option=
++endif
++
+ .PHONY: flutter/android/docker/image
+ flutter/android/docker/image: output/docker/mlperf_mobile_flutter_android_${flutter_docker_postfix}.stamp
+ output/docker/mlperf_mobile_flutter_android_${flutter_docker_postfix}.stamp: flutter/android/docker/Dockerfile
+-	docker image build -t ${DOCKER_IMAGE_TAG} flutter/android/docker
++	docker image build ${internal_docker_option} -t ${DOCKER_IMAGE_TAG} flutter/android/docker
+ 	mkdir -p output/docker
+ 	touch $@
+ 
+diff --git a/flutter/android/android.mk b/flutter/android/android.mk
+index 7a2b391..64ac51a 100644
+--- a/flutter/android/android.mk
++++ b/flutter/android/android.mk
+@@ -33,7 +33,7 @@ else
+ endif
+ 
+ .PHONY: flutter/android/libs/build
+-flutter/android/libs/build:
++flutter/android/libs/build: flutter/libqtibackend/patchlibs
+ 	bazel ${BAZEL_OUTPUT_ROOT_ARG} ${proxy_bazel_args} ${sonar_bazel_startup_options} \
+ 		build ${BAZEL_CACHE_ARG} ${bazel_links_arg} ${sonar_bazel_build_args} \
+ 		--config=android_arm64 \
+diff --git a/flutter/android/docker/Dockerfile b/flutter/android/docker/Dockerfile
+index f56a12c..4a21c55 100644
+--- a/flutter/android/docker/Dockerfile
++++ b/flutter/android/docker/Dockerfile
+@@ -18,9 +18,11 @@ RUN apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install
+     gnupg \
+     make \
+     protobuf-compiler \
++    patchelf \
+     python3 \
+     python3-pip && \
+     rm -rf /var/lib/apt/lists/*
++
+ RUN ln -s /usr/bin/python3 /usr/bin/python
+ RUN python3 -m pip install numpy absl-py
+ 
+@@ -67,7 +69,7 @@ RUN mkdir $ANDROID_SDK_HOME && chmod 777 $HOME/.cache/.android && \
+     PASSWD=$(pwgen -s -y 20 1) && keytool -genkey -v -keystore $ANDROID_SDK_HOME/debug.keystore \
+     -storepass $PASSWD -alias androiddebugkey -keypass $PASSWD -dname "CN=Android Debug,O=Android,C=US"
+ 
+-RUN chmod 777 $HOME
++RUN chmod -R 777 $HOME
+ 
+ RUN mkdir -p /mnt/cache && chmod 777 /mnt/cache
+ RUN mkdir -p /mnt/project/flutter/build && chmod 777 /mnt/project/flutter/build
+diff --git a/flutter/cpp/binary/cmdline-docker.mk b/flutter/cpp/binary/cmdline-docker.mk
+index 9575560..63e92f3 100644
+--- a/flutter/cpp/binary/cmdline-docker.mk
++++ b/flutter/cpp/binary/cmdline-docker.mk
+@@ -14,7 +14,7 @@
+ ##########################################################################
+ 
+ .PHONY: docker/cmdline/android/release
+-docker/cmdline/android/release:
++docker/cmdline/android/release: flutter/android/docker/image
+ 	MSYS2_ARG_CONV_EXCL="*" docker run \
+ 		${flutter_common_docker_flags} \
+ 		make cmdline/android/bins/release
+\ No newline at end of file
+diff --git a/flutter/cpp/binary/cmdline.mk b/flutter/cpp/binary/cmdline.mk
+index 61c777d..fce713b 100644
+--- a/flutter/cpp/binary/cmdline.mk
++++ b/flutter/cpp/binary/cmdline.mk
+@@ -52,6 +52,7 @@ windows_cmdline_folder=output/windows/cmdline
+ .PHONY: cmdline/windows/bins
+ cmdline/windows/bins:
+ 	bazel ${BAZEL_OUTPUT_ROOT_ARG} --output_base=C:\\b_cache1\\ build ${BAZEL_CACHE_ARG} ${bazel_links_arg} \
++		--experimental_distdir=C:\b_cache1\manual-download \
+ 		--config=windows_arm64 \
+ 		--cpu=x64_arm64_windows --worker_verbose\
+ 		${backend_tflite_windows_target} \
+diff --git a/flutter/flutter.mk b/flutter/flutter.mk
+index 0a0e403..574d503 100644
+--- a/flutter/flutter.mk
++++ b/flutter/flutter.mk
+@@ -65,9 +65,9 @@ flutter_folder_args=${flutter_data_folder_arg} ${flutter_cache_folder_arg}
+ 
+ FIREBASE_ENV_FILE?=flutter/lib/firebase/firebase_options.env
+ -include ${FIREBASE_ENV_FILE}
+-export
+ .PHONY: flutter/firebase-config
+ flutter/firebase-config:
++	export
+ 	cat flutter/lib/firebase/firebase_options.template.dart | sed \
+   -e "s,FIREBASE_CI_USER_EMAIL,${FIREBASE_CI_USER_EMAIL}," \
+   -e "s,FIREBASE_CI_USER_PASSWORD,${FIREBASE_CI_USER_PASSWORD}," \
+diff --git a/flutter/tool/generate-apk-filename.sh b/flutter/tool/generate-apk-filename.sh
+index b559549..0aba356 100755
+--- a/flutter/tool/generate-apk-filename.sh
++++ b/flutter/tool/generate-apk-filename.sh
+@@ -12,6 +12,7 @@ if [ "${WITH_PIXEL}" = 1 ]; then suffix+="g"; fi
+ if [ "${WITH_TFLITE}" = 1 ]; then suffix+="t"; fi
+ 
+ today=$(date +%F)
++git config --global --add safe.directory /mnt/project
+ commit=$(git rev-parse --short HEAD)
+ 
+ output="${today}_mlperfbench-${commit}-${suffix}.apk"
+diff --git a/mobile_back_qti/BUILD b/mobile_back_qti/BUILD
+index d48723a..84b8fa9 100644
+--- a/mobile_back_qti/BUILD
++++ b/mobile_back_qti/BUILD
+@@ -28,19 +28,19 @@ config_setting(
+ cc_import(
+     name = "snpewindowslib",
+     hdrs = glob([
+-        SNPE_VERSION + "/include/zdl/**/*.hpp",
+-        SNPE_VERSION + "/include/zdl/**/*.h",
++        SNPE_VERSION + "/include/SNPE/**/*.hpp",
++        SNPE_VERSION + "/include/SNPE/**/*.h",
+     ]),
+-    interface_library = SNPE_VERSION + "/lib/aarch64-windows-vc19/SNPE.lib",
+-    shared_library = SNPE_VERSION + "/lib/aarch64-windows-vc19/SNPE.dll",
++    interface_library = SNPE_VERSION + "/lib/aarch64-windows-msvc/SNPE.lib",
++    shared_library = SNPE_VERSION + "/lib/aarch64-windows-msvc/SNPE.dll",
+ )
+ 
+ cc_library(
+     name = "snpe_depsdll",
+     srcs = [
+-        SNPE_VERSION + "/lib/aarch64-windows-vc19/SNPE.dll",
+-        SNPE_VERSION + "/lib/aarch64-windows-vc19/SnpeHtpV68Stub.dll",
+-        SNPE_VERSION + "/lib/dsp/libSnpeHtpV68Skel.so",
++        SNPE_VERSION + "/lib/aarch64-windows-msvc/SNPE.dll",
++        SNPE_VERSION + "/lib/aarch64-windows-msvc/SnpeHtpV68Stub.dll",
++        SNPE_VERSION + "/lib/hexagon-v68/unsigned/libSnpeHtpV68Skel.so",
+     ],
+     linkstatic = 0,
+     deps = [":snpewindowslib"],
+@@ -49,28 +49,28 @@ cc_library(
+ cc_library(
+     name = "snpe",
+     srcs = [
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libSNPE.so",
++        SNPE_VERSION + "/lib/aarch64-android/libSNPE.so",
+     ],
+     hdrs = glob([
+-        SNPE_VERSION + "/include/zdl/**/*.hpp",
+-        SNPE_VERSION + "/include/zdl/**/*.h",
++        SNPE_VERSION + "/include/SNPE/**/*.hpp",
++        SNPE_VERSION + "/include/SNPE/**/*.h",
+     ]),
+-    copts = ["-I" + SNPE_VERSION + "/include/zdl"],
++    copts = ["-I" + SNPE_VERSION + "/include/SNPE"],
+     visibility = ["//visibility:public"],
+ )
+ 
+ cc_library(
+     name = "snpe_deps",
+     srcs = [
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libhta.so",
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libSnpeHtpV73Stub.so",
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libSnpeHtpV69Stub.so",
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libSnpeHtpV68Stub.so",
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libSNPE.so",
+-        SNPE_VERSION + "/lib/aarch64-android-clang8.0/libSnpeHtpPrepare.so",
+-        SNPE_VERSION + "/lib/dsp/libSnpeHtpV69Skel.so",
+-        SNPE_VERSION + "/lib/dsp/libSnpeHtpV68Skel.so",
+-        SNPE_VERSION + "/lib/dsp/libSnpeHtpV73Skel.so",
++        SNPE_VERSION + "/lib/aarch64-android/libhta.so",
++        SNPE_VERSION + "/lib/aarch64-android/libSnpeHtpV73Stub.so",
++        SNPE_VERSION + "/lib/aarch64-android/libSnpeHtpV69Stub.so",
++        SNPE_VERSION + "/lib/aarch64-android/libSnpeHtpV68Stub.so",
++        SNPE_VERSION + "/lib/aarch64-android/libSNPE.so",
++        SNPE_VERSION + "/lib/aarch64-android/libSnpeHtpPrepare.so",
++        SNPE_VERSION + "/lib/hexagon-v68/unsigned/libSnpeHtpV68Skel.so",
++        SNPE_VERSION + "/lib/hexagon-v69/unsigned/libSnpeHtpV69Skel.so",
++        SNPE_VERSION + "/lib/hexagon-v73/unsigned/libSnpeHtpV73Skel.so",
+     ],
+ )
+ 
+diff --git a/mobile_back_qti/DLC/Makefile b/mobile_back_qti/DLC/Makefile
+index cd155d3..b66b698 100644
+--- a/mobile_back_qti/DLC/Makefile
++++ b/mobile_back_qti/DLC/Makefile
+@@ -16,6 +16,7 @@
+ # This file must be called from top level Makefile
+ 
+ include ../make/builddir.mk
++include ../make/qti_docker_intialization.mk
+ 
+ DATASETS:=${TOPDIR}/datasets
+ DATASETS_OUT:=${DATASETS}/output
+@@ -38,54 +39,48 @@ MOBILEMOSAIC_MODEL_PATH=${MODEL_BASE_PATH}/vision/mosaic/models_and_checkpoints/
+ SNUSR_MODEL_PATH = ${MODEL_BASE_PATH}/vision/edsr/models_and_checkpoints/checkpoints/f32b5/ckpt_qat/
+ SNUSR_CALIBRATION_PATH=${MODEL_BASE_PATH}/calibration/OpenImages
+ MLPERF_MODELS_PATH = ${DLCBUILDDIR}/mlperf_models/
++MOBILEDETSSDQAT_MODEL_PATH = ${DLCBUILDDIR}/mobile/vision/mobiledet/uint8/export_inference_graph/
+ 
+-${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp:
++
++${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp: \
++	${TOPDIR}/datasets/docker/Dockerfile
+ 	# Building mlperf_mobile docker
+-	docker image build -t mlperf_mobile:1.1 $(dir $(abspath ${TOPDIR}/datasets/docker/Dockerfile))
++	docker image build ${internal_docker_option} -t mlperf_mobile:1.1 $(dir $(abspath ${TOPDIR}/datasets/docker/Dockerfile))
+ 	mkdir -p ${DLCBUILDDIR}
+ 	touch $@
+ 
+-${DLCBUILDDIR}/mlperf_mosaic_docker.stamp:
++${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp: \
++	${TOPDIR}/mobile_back_qti/docker/mlperf_dlc_prepare/Dockerfile
++    # Building mlperf_mobile docker
++	docker image build -t mlperf_dlc_prepare $(dir $(abspath ${TOPDIR}/mobile_back_qti/docker/mlperf_dlc_prepare/Dockerfile))
++	mkdir -p ${DLCBUILDDIR}
++	touch $@
++
++${DLCBUILDDIR}/mlperf_mosaic_docker.stamp: \
++	${TOPDIR}/mobile_back_qti/docker/mlperf_mosaic/Dockerfile
+ 	# Building mlperf_mosaic docker
+-	docker image build -t mlperf_mosaic:1.0 $(dir $(abspath ${TOPDIR}/mobile_back_qti/docker/mlperf_mosaic/Dockerfile))
++	docker image build ${internal_docker_option} -t mlperf_mosaic:1.0 $(dir $(abspath ${TOPDIR}/mobile_back_qti/docker/mlperf_mosaic/Dockerfile))
+ 	mkdir -p ${DLCBUILDDIR}
+ 	touch $@
+ 
+-${DLCBUILDDIR}/mlperf_snusr_docker.stamp:
++${DLCBUILDDIR}/mlperf_snusr_docker.stamp: \
++	${TOPDIR}/mobile_back_qti/docker/mlperf_snusr/Dockerfile
+ 	# Building snusr docker
+-	docker image build -t mlperf_snusr:1.0 $(dir $(abspath ${TOPDIR}/mobile_back_qti/docker/mlperf_snusr/Dockerfile))
++	docker image build ${internal_docker_option} -t mlperf_snusr:1.0 $(dir $(abspath ${TOPDIR}/mobile_back_qti/docker/mlperf_snusr/Dockerfile))
+ 	mkdir -p ${DLCBUILDDIR}
+ 	touch $@
+ 
+-htp-dlc: ${DLCBUILDDIR}/mobilebert_htp.stamp \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp.stamp \
+-	${DLCBUILDDIR}/ssd_mobiledet_qat_htp.stamp \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched.stamp \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.stamp \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.stamp \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.stamp \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.stamp \
+-	${DLCBUILDDIR}/mobile_mosaic_htp.stamp \
+-	${DLCBUILDDIR}/snusr_htp.stamp
++htp-dlc: mobilenet_edgetpu \
++    mobiledet \
++    mosaic \
++    mobilebert \
++    snusr \
++    mobilenet_edgetpu_batched
+ 
+ mobilenet_edgetpu_batched: \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched.stamp \
+-    ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.stamp \
+-    ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.stamp \
+-    ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.stamp \
+-   	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.stamp
+-
+-8pg1: \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.stamp
+-
+-7g1: \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.stamp
+-
+-8g2: \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.stamp
+-
+-sd8cxg3: \
+-	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.stamp
++    ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_3.stamp \
++    ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_4.stamp \
++    ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_8.stamp
+ 
+ mosaic: \
+ 	${DLCBUILDDIR}/mobile_mosaic_htp.stamp
+@@ -121,7 +116,7 @@ ${DLCBUILDDIR}/mlperf_models.stamp:
+ 	touch $@
+ 
+ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+ 	# Mobilenetedge TPU model conversion ....
+@@ -133,7 +128,7 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float.dlc: \
+ 		-v ${MOBILENETEDGETPU_MODEL_PATH}:/models \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+ 			-i /models/frozen_graph_tf1x_transform.pb \
+ 			-d input "1,224,224,3" --out_node "MobilenetEdgeTPU/Predictions/Softmax" \
+@@ -143,7 +138,7 @@ ${DLCBUILDDIR}/imagenet/imagenet_image_list.txt: ${DLCBUILDDIR}/imagenet/state/q
+ 	cat ${TOPDIR}/datasets/downloads/imagenet/cal_image_list_option_1.txt | sed "s!^!quantdata/!" | sed "s!JPEG!raw!" > $@
+ 
+ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float.dlc \
+ 		${DLCBUILDDIR}/imagenet/imagenet_image_list.txt
+ 	# Quantization of MobilenetEdgeTPU DLC for HTP
+@@ -155,7 +150,7 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant.stamp: \
+ 		-v ${DLCBUILDDIR}/imagenet:/imagenet \
+ 		-w /imagenet \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+ 			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float.dlc \
+ 			--input_list=imagenet_image_list.txt \
+@@ -163,7 +158,7 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant.stamp: \
+ 	# Mobilenetedge TPU model conversion completed
+ 
+ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant.stamp \
+ 	# Offline prepare of MobilenetEdgeTPU DLC for HTP
+ 	docker run \
+@@ -174,7 +169,7 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp.stamp: \
+ 		-v ${DLCBUILDDIR}/imagenet:/imagenet \
+ 		-w /imagenet \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+ 			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant.dlc \
+ 			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp.dlc \
+@@ -183,8 +178,8 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp.stamp: \
+ 	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp.dlc ${MLPERF_MODELS_PATH}
+ 	touch $@
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_3.dlc: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+ 	# Mobilenetedge TPU model conversion ....
+@@ -196,16 +191,16 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched.dlc: \
+ 		-v ${MOBILENETEDGETPU_MODEL_PATH}:/models \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+ 			-i /models/frozen_graph_tf1x_transform.pb \
+ 			-d input "3,224,224,3" --out_node "MobilenetEdgeTPU/Predictions/Softmax" \
+-			-o /output/mobilenet_edgetpu_224_1.0_float_batched.dlc
++			-o /output/mobilenet_edgetpu_224_1.0_float_batched_3.dlc
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_3.stamp: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/imagenet/imagenet_image_list.txt \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched.dlc
++		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_3.dlc
+ 	# Quantization of MobilenetEdgeTPU Batched DLC for HTP
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -215,16 +210,16 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched.stamp: \
+ 		-v ${DLCBUILDDIR}/imagenet:/imagenet-out \
+ 		-w /imagenet-out \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched.dlc \
++			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_3.dlc \
+ 			--input_list=imagenet_image_list.txt \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched.dlc
++			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_3.dlc
+ 	# Mobilenetedge TPU model conversion completed
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched.stamp
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_3.stamp: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
++		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_3.stamp
+ 	# Offline prepare of MobilenetEdgeTPU Batched DLC for HTP
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -232,17 +227,17 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched.stamp: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched.dlc \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched.dlc \
++			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_3.dlc \
++			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc \
+ 			--htp_socs=sm8350,sm7325,sm8450,sm8550,sm7475
+ 	# Mobilenetedge TPU model conversion completed
+-	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched.dlc ${MLPERF_MODELS_PATH}
++	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc ${MLPERF_MODELS_PATH}
+ 	touch $@
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd7g1.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_4.dlc: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+ 	# Mobilenetedge TPU model conversion ....
+@@ -254,16 +249,16 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd7g1.dlc: \
+ 		-v ${MOBILENETEDGETPU_MODEL_PATH}:/models \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+ 			-i /models/frozen_graph_tf1x_transform.pb \
+ 			-d input "4,224,224,3" --out_node "MobilenetEdgeTPU/Predictions/Softmax" \
+-			-o /output/mobilenet_edgetpu_224_1.0_float_batched_sd7g1.dlc
++			-o /output/mobilenet_edgetpu_224_1.0_float_batched_4.dlc
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd7g1.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_4.stamp: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/imagenet/imagenet_image_list.txt \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd7g1.dlc
++		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_4.dlc
+ 	# Quantization of MobilenetEdgeTPU Batched DLC for HTP
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -273,16 +268,16 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd7g1.stamp: \
+ 		-v ${DLCBUILDDIR}/imagenet:/imagenet-out \
+ 		-w /imagenet-out \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_sd7g1.dlc \
++			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_4.dlc \
+ 			--input_list=imagenet_image_list.txt \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd7g1.dlc
++			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_4.dlc
+ 	# Mobilenetedge TPU model conversion completed
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd7g1.stamp
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_4.stamp: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
++		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_4.stamp
+ 	# Offline prepare of MobilenetEdgeTPU Batched DLC for HTP
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -290,17 +285,17 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.stamp: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd7g1.dlc \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.dlc \
++			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_4.dlc \
++			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc \
+ 			--htp_socs=sm8350,sm7325,sm8450,sm8550,sm7475
+ 	# Mobilenetedge TPU model conversion completed
+-	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.dlc ${MLPERF_MODELS_PATH}
++	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc ${MLPERF_MODELS_PATH}
+ 	touch $@
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8pg1.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_8.dlc: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+ 	# Mobilenetedge TPU model conversion ....
+@@ -312,132 +307,16 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8pg1.dlc: \
+ 		-v ${MOBILENETEDGETPU_MODEL_PATH}:/models \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+-			-i /models/frozen_graph_tf1x_transform.pb \
+-			-d input "4,224,224,3" --out_node "MobilenetEdgeTPU/Predictions/Softmax" \
+-			-o /output/mobilenet_edgetpu_224_1.0_float_batched_sd8pg1.dlc
+-
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8pg1.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/imagenet/imagenet_image_list.txt \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8pg1.dlc
+-	# Quantization of MobilenetEdgeTPU Batched DLC for HTP
+-	docker run \
+-		-e PYTHONPATH=/snpe_sdk/lib/python \
+-		-e LD_LIBRARY_PATH=/snpe_sdk/lib/x86_64-linux-clang \
+-		-v ${SNPE_SDK}:/snpe_sdk \
+-		-v ${DLCBUILDDIR}:/output \
+-		-v ${DLCBUILDDIR}/imagenet:/imagenet-out \
+-		-w /imagenet-out \
+-		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_sd8pg1.dlc \
+-			--input_list=imagenet_image_list.txt \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd8pg1.dlc
+-	# Mobilenetedge TPU model conversion completed
+-
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8pg1.stamp
+-	# Offline prepare of MobilenetEdgeTPU Batched DLC for HTP
+-	docker run \
+-		-e PYTHONPATH=/snpe_sdk/lib/python \
+-		-e LD_LIBRARY_PATH=/snpe_sdk/lib/x86_64-linux-clang \
+-		-v ${SNPE_SDK}:/snpe_sdk \
+-		-v ${DLCBUILDDIR}:/output \
+-		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd8pg1.dlc \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc \
+-			--htp_socs=sm8350,sm7325,sm8450,sm8550,sm7475
+-	# Mobilenetedge TPU model conversion completed
+-	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc ${MLPERF_MODELS_PATH}
+-	touch $@
+-
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8g2.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobile/.stamp \
+-		${DLCBUILDDIR}/mlperf_models.stamp
+-	# Mobilenetedge TPU model conversion ....
+-	# Batched Float model
+-	mkdir -p ${DLCBUILDDIR}
+-	docker run \
+-		-e PYTHONPATH=/snpe_sdk/lib/python \
+-		-v ${SNPE_SDK}:/snpe_sdk \
+-		-v ${MOBILENETEDGETPU_MODEL_PATH}:/models \
+-		-v ${DLCBUILDDIR}:/output \
+-		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+-			-i /models/frozen_graph_tf1x_transform.pb \
+-			-d input "3,224,224,3" --out_node "MobilenetEdgeTPU/Predictions/Softmax" \
+-			-o /output/mobilenet_edgetpu_224_1.0_float_batched_sd8g2.dlc
+-
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8g2.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/imagenet/imagenet_image_list.txt \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8g2.dlc
+-	# Quantization of MobilenetEdgeTPU Batched DLC for HTP
+-	docker run \
+-		-e PYTHONPATH=/snpe_sdk/lib/python \
+-		-e LD_LIBRARY_PATH=/snpe_sdk/lib/x86_64-linux-clang \
+-		-v ${SNPE_SDK}:/snpe_sdk \
+-		-v ${DLCBUILDDIR}:/output \
+-		-v ${DLCBUILDDIR}/imagenet:/imagenet-out \
+-		-w /imagenet-out \
+-		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_sd8g2.dlc \
+-			--input_list=imagenet_image_list.txt \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd8g2.dlc
+-	# Mobilenetedge TPU model conversion completed
+-
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8g2.stamp
+-	# Offline prepare of MobilenetEdgeTPU Batched DLC for HTP
+-	docker run \
+-		-e PYTHONPATH=/snpe_sdk/lib/python \
+-		-e LD_LIBRARY_PATH=/snpe_sdk/lib/x86_64-linux-clang \
+-		-v ${SNPE_SDK}:/snpe_sdk \
+-		-v ${DLCBUILDDIR}:/output \
+-		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd8g2.dlc \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc \
+-			--htp_socs=sm8350,sm7325,sm8450,sm8550,sm7475
+-	# Mobilenetedge TPU model conversion completed
+-	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc ${MLPERF_MODELS_PATH}
+-	touch $@
+-
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8cxg3.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobile/.stamp \
+-		${DLCBUILDDIR}/mlperf_models.stamp
+-	# Mobilenetedge TPU model conversion ....
+-	# Batched Float model
+-	mkdir -p ${DLCBUILDDIR}
+-	docker run \
+-		-e PYTHONPATH=/snpe_sdk/lib/python \
+-		-v ${SNPE_SDK}:/snpe_sdk \
+-		-v ${MOBILENETEDGETPU_MODEL_PATH}:/models \
+-		-v ${DLCBUILDDIR}:/output \
+-		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+ 			-i /models/frozen_graph_tf1x_transform.pb \
+ 			-d input "8,224,224,3" --out_node "MobilenetEdgeTPU/Predictions/Softmax" \
+-			-o /output/mobilenet_edgetpu_224_1.0_float_batched_sd8cxg3.dlc
++			-o /output/mobilenet_edgetpu_224_1.0_float_batched_8.dlc
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8cxg3.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_8.stamp: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/imagenet/imagenet_image_list.txt \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_sd8cxg3.dlc
++		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_float_batched_8.dlc
+ 	# Quantization of MobilenetEdgeTPU Batched DLC for HTP
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -447,16 +326,16 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8cxg3.stamp: \
+ 		-v ${DLCBUILDDIR}/imagenet:/imagenet-out \
+ 		-w /imagenet-out \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_sd8cxg3.dlc \
++			--input_dlc=/output/mobilenet_edgetpu_224_1.0_float_batched_8.dlc \
+ 			--input_list=imagenet_image_list.txt \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd8cxg3.dlc
++			--output_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_8.dlc
+ 	# Mobilenetedge TPU model conversion completed
+ 
+-${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+-		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_sd8cxg3.stamp
++${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_8.stamp: \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
++		${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_quant_batched_8.stamp
+ 	# Offline prepare of MobilenetEdgeTPU Batched DLC for HTP
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -464,17 +343,17 @@ ${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.stamp: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+-			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_sd8cxg3.dlc \
+-			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.dlc \
++			--input_dlc=/output/mobilenet_edgetpu_224_1.0_quant_batched_8.dlc \
++			--output_dlc=/output/mobilenet_edgetpu_224_1.0_htp_batched_8.dlc \
+ 			--htp_socs=sm8350,sm7325,sm8450,sm8550,sm7475
+ 	# Mobilenetedge TPU model conversion completed
+-	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.dlc ${MLPERF_MODELS_PATH}
++	cp	${DLCBUILDDIR}/mobilenet_edgetpu_224_1.0_htp_batched_8.dlc ${MLPERF_MODELS_PATH}
+ 	touch $@
+ 
+ ${DLCBUILDDIR}/ssd_mobiledet_qat.dlc: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+ 	docker run \
+@@ -482,9 +361,9 @@ ${DLCBUILDDIR}/ssd_mobiledet_qat.dlc: \
+ 		-e LD_LIBRARY_PATH=/snpe_sdk/lib/x86_64-linux-clang \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/dlc \
+-		-v ${DLCBUILDDIR}/mobile/vision/mobiledet/uint8/export_inference_graph:/model \
++		-v ${MOBILEDETSSDQAT_MODEL_PATH}:/model \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+ 			-i model/frozen_inference_graph.pb \
+ 			-d Preprocessor/map/TensorArrayStack/TensorArrayGatherV3 "1,320,320,3" \
+@@ -497,7 +376,7 @@ ${DLCBUILDDIR}/coco/coco_image_list.txt: ${DLCBUILDDIR}/coco/state/quantdata.sta
+ 	cat ${TOPDIR}/datasets/util/coco/coco_calibration_files.txt | sed "s!^!quantdata/!" | sed "s!jpg!raw!" > ${DLCBUILDDIR}/coco/coco_image_list.txt
+ 
+ ${DLCBUILDDIR}/ssd_mobiledet_qat_quant.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/coco/coco_image_list.txt \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp \
+@@ -512,7 +391,7 @@ ${DLCBUILDDIR}/ssd_mobiledet_qat_quant.stamp: \
+ 		-v ${DLCBUILDDIR}/coco:/coco-out \
+ 		-w /coco-out \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+ 			--input_dlc=/output/ssd_mobiledet_qat.dlc \
+ 			--input_list=coco_image_list.txt \
+@@ -521,7 +400,7 @@ ${DLCBUILDDIR}/ssd_mobiledet_qat_quant.stamp: \
+ 
+ 
+ ${DLCBUILDDIR}/ssd_mobiledet_qat_htp.stamp: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/ssd_mobiledet_qat_quant.stamp
+ 	# Offline prepare of MobileDET SSD DLC for HTP
+ 	docker run \
+@@ -530,7 +409,7 @@ ${DLCBUILDDIR}/ssd_mobiledet_qat_htp.stamp: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+ 			--input_dlc=/output/ssd_mobiledet_qat_quant.dlc \
+ 			--output_dlc=/output/ssd_mobiledet_qat_htp.dlc \
+@@ -545,7 +424,7 @@ ${DLCBUILDDIR}/ade20k/ade20k_image_list.txt: ${DLCBUILDDIR}/ade20k/state/quantda
+ 	cat ${TOPDIR}/datasets/util/ade20k/ade20k_calibration_files.txt | sed "s!^!/ade20k/quantdata/!" | sed "s!jpg!raw!" > $@
+ 
+ ${DLCBUILDDIR}/mobilebert_quant.pb: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+ 	# MobileBERT quant model freeze ....
+@@ -557,8 +436,8 @@ ${DLCBUILDDIR}/mobilebert_quant.pb: \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-v ${MOBILEBERT_MODEL_PATH}:/models \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
+-		python3 /usr/local/lib/python3.6/dist-packages/tensorflow_core/python/tools/freeze_graph.py \
++		mlperf_dlc_prepare \
++		python3 /usr/local/lib/python3.8/dist-packages/tensorflow/python/tools/freeze_graph.py \
+ 			--input_graph=/models/saved_model.pb --input_checkpoint=/models/checkpoints/quant \
+ 			--output_graph=/output/mobilebert_quant.pb \
+ 			--output_node_names=end_logits,start_logits \
+@@ -567,7 +446,7 @@ ${DLCBUILDDIR}/mobilebert_quant.pb: \
+ 
+ ${DLCBUILDDIR}/mobilebert_float.dlc: \
+ 		${DLCBUILDDIR}/mobilebert_quant.pb \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DATASETS_OUT}/state/calibration.stamp \
+ 		${DLCBUILDDIR}/mobile/.stamp \
+ 		${DLCBUILDDIR}/mlperf_models.stamp
+@@ -581,7 +460,7 @@ ${DLCBUILDDIR}/mobilebert_float.dlc: \
+ 		-v ${DLCDIR}:/dlc \
+ 		-v ${MOBILEBERT_MODEL_PATH}:/models \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-tensorflow-to-dlc \
+ 			--input_network /output/mobilebert_quant.pb \
+ 			--input_dim bert/embeddings/ExpandDims 1,384,1 \
+@@ -596,7 +475,7 @@ ${DLCBUILDDIR}/mobilebert_float.dlc: \
+ 
+ ${DLCBUILDDIR}/mobilebert_quant.stamp: \
+ 		${DLCBUILDDIR}/mobilebert_float.dlc \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 		${DATASETS}/output/state/squad_calibration.stamp
+ 	# MobileBERT float model quantization ...
+ 	mkdir -p ${DLCBUILDDIR}
+@@ -608,7 +487,7 @@ ${DLCBUILDDIR}/mobilebert_quant.stamp: \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-w /squad-out \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+ 			--input_dlc=/output/mobilebert_float.dlc \
+ 			--input_list=input_list.txt \
+@@ -619,7 +498,7 @@ ${DLCBUILDDIR}/mobilebert_quant.stamp: \
+ 
+ ${DLCBUILDDIR}/mobilebert_htp.stamp: \
+ 		${DLCBUILDDIR}/mobilebert_quant.stamp \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
++		${DLCBUILDDIR}/mlperf_dlc_prepare_docker.stamp \
+ 	# MobileBERT quant model offline prepare ...
+ 	mkdir -p ${DLCBUILDDIR}
+ 	docker run \
+@@ -628,7 +507,7 @@ ${DLCBUILDDIR}/mobilebert_htp.stamp: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+ 			--input_dlc=/output/mobilebert_quant.dlc \
+ 			--output_dlc=/output/mobilebert_quantized_htp.dlc \
+@@ -671,7 +550,7 @@ ${DLCBUILDDIR}/mobile_mosaic_quant.stamp: \
+ 		-v ${DLCBUILDDIR}/ade20k:/ade20k \
+ 		-w /ade20k \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_mosaic:1.0 \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-quant \
+ 			--input_dlc=/output/mobile_mosaic_float.dlc \
+ 			--input_list=ade20k_image_list.txt \
+@@ -689,7 +568,7 @@ ${DLCBUILDDIR}/mobile_mosaic_htp.stamp: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/output \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_mosaic:1.0 \
+ 		/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-graph-prepare \
+ 			--input_dlc=/output/mobile_mosaic_quant.dlc \
+ 			--output_dlc=/output/mobile_mosaic_htp.dlc \
+@@ -779,6 +658,7 @@ ${DLCBUILDDIR}/snusr_calibration_list.txt: \
+ 		-u ${USERID}:${GROUPID} \
+ 		mlperf_snusr:1.0 \
+ 		python3 /util/snusr/rgb8_to_raw.py /snusr/ /calibration/OpenImages_calibration_rgb8.txt
++	rm -rf ${DLCBUILDDIR}/snusr/_raws
+ 	mkdir -p ${DLCBUILDDIR}/snusr
+ 	mv ${DATASETS}/output/snusr/_raws ${DLCBUILDDIR}/snusr/ 
+ 	touch ${DLCBUILDDIR}/snusr/snusr_calibration_list.txt
+@@ -897,7 +777,6 @@ ${DATASETS}/output/state/snusr_calibration.stamp:
+ # DLC Info
+ ####################################################################################
+ gen-htp-dlc-info: \
+-		${DLCBUILDDIR}/mlperf_mobile_docker_1_1.stamp \
+ 		htp-dlc
+ 	docker run \
+ 		-e PYTHONPATH=/snpe_sdk/lib/python \
+@@ -905,15 +784,13 @@ gen-htp-dlc-info: \
+ 		-v ${SNPE_SDK}:/snpe_sdk \
+ 		-v ${DLCBUILDDIR}:/dlc \
+ 		-u ${USERID}:${GROUPID} \
+-		mlperf_mobile:1.1 \
++		mlperf_dlc_prepare \
+ 		/bin/bash -c '\
+ 			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp.dlc && \
+ 			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/ssd_mobiledet_qat_htp.dlc && \
+-			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched.dlc && \
+-			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.dlc && \
+-            /snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc && \
+-            /snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc && \
+-            /snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.dlc && \
++			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc && \
++			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc && \
++            /snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilenet_edgetpu_224_1.0_htp_batched_8.dlc && \
+ 			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobile_mosaic_htp.dlc && \
+ 			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/snusr_htp.dlc && \
+ 			/snpe_sdk/bin/x86_64-linux-clang/snpe-dlc-info -i /dlc/mobilebert_quantized_htp.dlc'
+diff --git a/mobile_back_qti/README.md b/mobile_back_qti/README.md
+index 437c3c7..9f3959f 100644
+--- a/mobile_back_qti/README.md
++++ b/mobile_back_qti/README.md
+@@ -12,9 +12,10 @@ uploaded with the other submission files to here: `<path where needs to be uploa
+ ## Requirements for LA
+ 
+ <!-- markdown-link-check-disable-next-line -->
+-* [SNPE SDK](https://developer.qualcomm.com/software/qualcomm-neural-processing-sdk/tools)
+-  * Version 2.7.0
+-* Linux machine capable of running Ubuntu 18.04 docker images
++* [Qualcomm Package Manager 3] (https://qpm.qualcomm.com/#/main/tools/details/QPM3)
++* [SNPE SDK](https://qpm.qualcomm.com/#/main/tools/details/qualcomm_neural_processing_sdk)
++  * Version 2.13.4.<TODO>
++* Linux machine capable of running Ubuntu docker images
+ 
+ ### Optional
+ 
+@@ -28,11 +29,10 @@ Use your browser to download the SNPE SDK using the links above.
+ Create your Github personal access token.
+ 
+ ```shell
+-export GITHUB_TOKEN=<your-personal-access-token>
+ cd DLC/ && make
+ ```
+ 
+-It will take 2 hours on an 8-core Xeon workstation to generate the DLC files.
++It will take about 2 hours on an 8-core Xeon workstation to generate the DLC files.
+ 
+ ## Building the MLPerf app with the QTI backend
+ 
+@@ -43,7 +43,15 @@ git clone https://github.com/mlcommons/mobile_app_open
+ cd mobile_app_open
+ ```
+ 
+-* Download and extract the SNPE SDK (from Requirements above) to mobile_app_open/mobile_back_qti
++* Install Qualcomm Package manager on the linux machine
++```shell
++sudo apt-get install ./QualcommPackageManager3.3.0.84.3.Linux-x86.deb
++```
++* Extract the SNPE SDK (from Requirements above) to mobile_app_open/mobile_back_qti
++```shell
++qpm-cli --extract ./qualcomm_neural_processing_sdk.2.13.0.230730.Linux-AnyCPU.qik
++cp -rv /opt/qcom/aistack/snpe/2.13.0.230730 mobile_app_open/mobile_back_qti/qaisw-2.13.4.230831
++```
+ 
+ * If you have an HTTP proxy, you may need the following
+ 
+@@ -58,7 +66,7 @@ Build with the following build command.
+ make OFFICIAL_BUILD=true FLUTTER_BUILD_NUMBER=1  WITH_QTI=1 docker/flutter/android/release
+ ```
+ 
+-This will generate the MLPerf flutter app with QTI backend in ```mobile_app_open/output/android-apks/release.apk```
++This will generate the MLPerf flutter app with QTI backend in ```mobile_app_open/output/android-apks/<date>_mlperfbench-<commit_id>-<qtpsm>.apk```
+ 
+ ## Building the QTI backend lib
+ 
+@@ -86,7 +94,7 @@ uploaded with the other submission files to here: `<path where needs to be uploa
+ 
+ <!-- markdown-link-check-disable-next-line -->
+ * [SNPE windows SDK] (<https://developer.qualcomm.com/software/qualcomm-neural-processing-sdk/tools>)
+-  * Version 2.7.0
++  * Version 2.7.0 (windows version hasn't been updated in this release)
+ * Windows x86 machine
+ 
+ ## Setting up the environment
+@@ -147,9 +155,8 @@ Run accuracy mode with following command
+ 
+ ### What devices does this backend support?
+ 
+-This backend only supports SDM888/SDM888 Pro, SDM778G, SD7G1, SD8G1, SD8Pro G1, SD8G2 devices.
+-Other Snapdragon based devices will not run the MLPerf app. Future updates of the app will provide
+-additional device support.
++This backend only supports SDM888/SDM888 Pro, SDM778G, SD7G1, SD8G1, SD8Pro G1, SD7PG2, SD8G2 devices.
++Other already launched Snapdragon based devices can also run the MLPerf app as default fallback.
+ 
+ ### Is SNPE used to run all the models?
+ 
+diff --git a/mobile_back_qti/cpp/backend_qti/BUILD b/mobile_back_qti/cpp/backend_qti/BUILD
+index 42ff2de..3925e37 100644
+--- a/mobile_back_qti/cpp/backend_qti/BUILD
++++ b/mobile_back_qti/cpp/backend_qti/BUILD
+@@ -55,7 +55,7 @@ config_setting(
+ )
+ 
+ snpe_copts = [
+-    "-Imobile_back_qti/" + SNPE_VERSION + "/include/zdl",
++    "-Imobile_back_qti/" + SNPE_VERSION + "/include/SNPE",
+     "-fexceptions",
+     "-lc++_shared",
+ ]
+@@ -69,11 +69,14 @@ pbtxt2header(
+         "settings/qti_settings_sd7g1.pbtxt",
+         "settings/qti_settings_sd7pg2.pbtxt",
+         "settings/qti_settings_sd8cxg3.pbtxt",
++        "settings/qti_settings_sd7cxg3.pbtxt",
+         "settings/qti_settings_sd8g1.pbtxt",
+         "settings/qti_settings_sd8g2.pbtxt",
++        "settings/qti_settings_gpufp16.pbtxt",
+         "settings/qti_settings_sd8pg1.pbtxt",
+         "settings/qti_settings_sdm778.pbtxt",
+         "settings/qti_settings_sdm888.pbtxt",
++        "settings/qti_settings_sm4450.pbtxt",
+     ],
+ )
+ 
+diff --git a/mobile_back_qti/cpp/backend_qti/allocator.h b/mobile_back_qti/cpp/backend_qti/allocator.h
+index 1b4f91a..4280cff 100644
+--- a/mobile_back_qti/cpp/backend_qti/allocator.h
++++ b/mobile_back_qti/cpp/backend_qti/allocator.h
+@@ -176,29 +176,16 @@ class Allocator {
+ template <class T>
+ bool Allocator<T>::useIonBuffer = true;
+ 
+-static void *get_ion_buffer(size_t n, int chunkSize = 3) {
++static void *get_buffer(size_t n, int chunkSize = 3) {
+   void *p = ChunkAllocator::GetBuffer(n, chunkSize);
+   // LOG(INFO) << "QTI backend SNPE allocator " << n << " bytes at " << p << "
+   // with chunk size: " << chunkSize;
+   return p;
+ }
+ 
+-static void *std_get_buffer(size_t n, int chunkSize = 1) {
+-  // chunkSize is always ignored. definition needs to be consistent with
+-  // get_ion_buffer above
+-  void *p = std::malloc(n);
+-  // LOG(INFO) << "QTI backend STD allocator " << n << " bytes at " << p;
+-  return p;
+-}
+-
+-static void release_ion_buffer(void *p) {
++static void release_buffer(void *p) {
+   // LOG(INFO) << "QTI backend SNPE free " << p;
+   ChunkAllocator::ReleaseBuffer(p);
+ }
+ 
+-static void std_release_buffer(void *p) {
+-  // LOG(INFO) << "QTI backend STD free " << p;
+-  std::free(p);
+-}
+-
+ #endif
+diff --git a/mobile_back_qti/cpp/backend_qti/mlperf_helper.h b/mobile_back_qti/cpp/backend_qti/mlperf_helper.h
+index f1d12b7..e197b5b 100644
+--- a/mobile_back_qti/cpp/backend_qti/mlperf_helper.h
++++ b/mobile_back_qti/cpp/backend_qti/mlperf_helper.h
+@@ -30,7 +30,7 @@ static void process_config(const mlperf_backend_configuration_t *configs,
+   backend_data->perfProfile_ = SNPE_PERFORMANCE_PROFILE_BURST;
+   backend_data->loadOffTime_ = 2;
+   backend_data->loadOnTime_ = 100;
+-  backend_data->useIonBuffers_ = true;
++  backend_data->useIonBuffers_ = false;
+   backend_data->acceleratorName_ = configs->accelerator_desc;
+ 
+   std::string &delegate = backend_data->delegate_;
+@@ -52,6 +52,7 @@ static void process_config(const mlperf_backend_configuration_t *configs,
+ 
+   // Handle custom settings
+   std::string perfProfile = "burst";
++  std::string profileLevel = "off";
+   for (int i = 0; i < configs->count; ++i) {
+     if (strcmp(configs->keys[i], "scenario") == 0) {
+       backend_data->scenario_ = configs->values[i];
+@@ -116,6 +117,27 @@ static void process_config(const mlperf_backend_configuration_t *configs,
+         backend_data->perfProfile_ = SNPE_PERFORMANCE_PROFILE_BURST;
+         perfProfile = "burst";
+       }
++    } else if (strcmp(configs->keys[i], "profiling_level") == 0) {
++      profileLevel = configs->values[i];
++      if (std::strcmp(configs->values[i], "off") == 0) {
++        backend_data->profilingLevel_ = SNPE_PROFILING_LEVEL_OFF;
++      } else if (std::strcmp(configs->values[i], "basic") == 0) {
++        backend_data->profilingLevel_ = SNPE_PROFILING_LEVEL_BASIC;
++      } else if (std::strcmp(configs->values[i], "moderate") == 0) {
++        backend_data->profilingLevel_ = SNPE_PROFILING_LEVEL_MODERATE;
++      } else if (std::strcmp(configs->values[i], "detailed") == 0) {
++        backend_data->profilingLevel_ = SNPE_PROFILING_LEVEL_DETAILED;
++      } else {
++        LOG(INFO) << "Unrecognized profiling level: " << profileLevel;
++        backend_data->profilingLevel_ = SNPE_PROFILING_LEVEL_OFF;
++        profileLevel = "off";
++      }
++    } else if (strcmp(configs->keys[i], "cpu_int8") == 0) {
++        if (std::strcmp(configs->values[i], "true") == 0) {
++            backend_data->useCpuInt8_ = true;
++        } else {
++            backend_data->useCpuInt8_ = false;
++        }
+     }
+   }
+ 
+@@ -131,8 +153,10 @@ static void process_config(const mlperf_backend_configuration_t *configs,
+             << " | inputBufferType: " << backend_data->inputBufferType_
+             << " | outputBufferType: " << backend_data->outputBufferType_
+             << " | perfProfile: " << perfProfile
++            << " | profileLevel: " << profileLevel
+             << " | useIonBuffer: " << backend_data->useIonBuffers_
+-            << " | acceleratorName: " << backend_data->acceleratorName_;
++            << " | acceleratorName: " << backend_data->acceleratorName_
++            << " | useCpuInt8: " << backend_data->useCpuInt8_;
+ }
+ 
+ #endif
+diff --git a/mobile_back_qti/cpp/backend_qti/qti_backend_helper.cc b/mobile_back_qti/cpp/backend_qti/qti_backend_helper.cc
+index c910432..8a46e71 100644
+--- a/mobile_back_qti/cpp/backend_qti/qti_backend_helper.cc
++++ b/mobile_back_qti/cpp/backend_qti/qti_backend_helper.cc
+@@ -39,8 +39,6 @@ limitations under the License.
+ #include "tensorflow/core/platform/logging.h"
+ #include "tflite_c.h"
+ 
+-int isSignedStatus = DEFAULT;
+-
+ static size_t calcSizeFromDims(const size_t rank, const size_t *dims) {
+   if (rank == 0) return 0;
+   size_t size = 1;
+@@ -97,40 +95,11 @@ static Snpe_TensorShape_Handle_t calcStrides(
+   return tensorShapeHandle;
+ }
+ 
+-bool QTIBackendHelper::IsRuntimeAvailable(const snpe_runtimes_t delegate) {
+-  Snpe_Runtime_t runtime;
+-
+-  switch (delegate) {
+-    case SNPE_DSP:
+-      runtime = SNPE_RUNTIME_DSP;
+-      break;
+-    case SNPE_GPU:
+-      runtime = SNPE_RUNTIME_GPU;
+-      break;
+-    case SNPE_CPU:
+-      runtime = SNPE_RUNTIME_CPU;
+-      break;
+-    default:
+-      LOG(ERROR) << "runtime not supported";
+-      break;
+-  }
+-
+-  return Snpe_Util_IsRuntimeAvailableCheckOption(
+-      runtime, SNPE_RUNTIME_CHECK_OPTION_UNSIGNEDPD_CHECK);
+-}
+-
+ static Snpe_Runtime_t Str2Delegate(const snpe_runtimes_t delegate) {
+   Snpe_Runtime_t runtime;
+-  bool isDSP = false;
+-
+   switch (delegate) {
+     case SNPE_DSP:
+       runtime = SNPE_RUNTIME_DSP;
+-      isDSP = true;
+-      break;
+-    case SNPE_AIP:
+-      runtime = SNPE_RUNTIME_AIP_FIXED_TF;
+-      isDSP = true;
+       break;
+     case SNPE_GPU:
+       runtime = SNPE_RUNTIME_GPU;
+@@ -138,42 +107,26 @@ static Snpe_Runtime_t Str2Delegate(const snpe_runtimes_t delegate) {
+     case SNPE_CPU:
+       runtime = SNPE_RUNTIME_CPU;
+       break;
++    case SNPE_GPU_FP16:
++      runtime = SNPE_RUNTIME_GPU_FLOAT16;
++      break;
+     default:
++      runtime = SNPE_RUNTIME_UNSET;
+       LOG(ERROR) << "runtime not supported";
+       break;
+   }
+ 
+-  if (isDSP) {
+-    if (isSignedStatus == DEFAULT) {
+-      if (Snpe_Util_IsRuntimeAvailableCheckOption(
+-              runtime, SNPE_RUNTIME_CHECK_OPTION_UNSIGNEDPD_CHECK)) {
+-        isSignedStatus = UNSIGNED_PD;
+-        LOG(INFO) << "runtime " << delegate
+-                  << " is available on this platform with UnsignedPD";
+-      } else {
+-        if (Snpe_Util_IsRuntimeAvailableCheckOption(
+-                runtime, SNPE_RUNTIME_CHECK_OPTION_NORMAL_CHECK)) {
+-          isSignedStatus = SIGNED_PD;
+-          LOG(INFO) << "runtime " << delegate
+-                    << " is available on this platform with SignedPD";
+-        } else {
+-          // This platform doesn't support DSP runtime
+-          LOG(FATAL) << "runtime " << delegate
+-                     << " is not available on this platform";
+-        }
+-      }
+-    }
+-
+-    return runtime;
++  if (Snpe_Util_IsRuntimeAvailableCheckOption(runtime, SNPE_RUNTIME_CHECK_OPTION_UNSIGNEDPD_CHECK)) {
++    LOG(INFO) << "runtime " << delegate << " is available on this platform";
+   } else {
+-    if (!Snpe_Util_IsRuntimeAvailable(runtime)) {
+-      LOG(FATAL) << "runtime " << delegate
+-                 << " is not available on this platform";
+-    } else {
+-      LOG(INFO) << "runtime " << delegate << " is available on this platform";
+-      return runtime;
+-    }
++    LOG(FATAL) << "runtime " << delegate << " is not available on this platform";
+   }
++
++  return runtime;
++}
++
++bool QTIBackendHelper::IsRuntimeAvailable(const snpe_runtimes_t delegate) {
++  return (Str2Delegate (delegate) != SNPE_RUNTIME_UNSET);
+ }
+ 
+ void QTIBackendHelper::use_psnpe(const char *model_path) {
+@@ -230,11 +183,13 @@ void QTIBackendHelper::use_psnpe(const char *model_path) {
+       Snpe_BuildConfig_SetOutputBufferNames(buildConfigHandle, outputLayers);
+ 
+     std::string platformOptionStr = "";
+-    if (Socs::get_use_dsp_features() && isSignedStatus == UNSIGNED_PD) {
++    if(useCpuInt8_){
++      platformOptionStr = "enableCpuFxpMode:ON";
++    }
++    if (Socs::get_use_dsp_features()) {
+       // use unsignedPD feature for untrusted app.
+       platformOptionStr += "unsignedPD:ON";
+     }
+-
+     if (Socs::soc_check_feature(useIonBuffers_, platformOptionStr)) {
+       Snpe_BuildConfig_SetEnableInitCache(buildConfigHandle, true);
+     }
+@@ -272,10 +227,33 @@ void QTIBackendHelper::use_psnpe(const char *model_path) {
+   if (!snpe_->snpeHandle) {
+     LOG(FATAL) << "Error in init of snpe_ " << snpe_->snpeHandle;
+   }
++
++  if(profilingLevel_ !=  SNPE_PROFILING_LEVEL_OFF){
++    auto diagLogHandle = Snpe_SNPE_GetDiagLogInterface_Ref(snpe_->snpeHandle);
++    if (!diagLogHandle)
++      LOG(INFO)<<"Get diagLogHandle failed";
++    auto optionsHandle = Snpe_IDiagLog_GetOptions(diagLogHandle);
++    std::string OutputDir = ".\diaglogs";
++    #ifdef __ANDROID__
++    OutputDir = "/sdcard/Android/data/org.mlcommons.android.mlperfbench/files/diaglogs";
++    #endif
++    Snpe_Options_SetLogFileDirectory(optionsHandle, OutputDir.c_str());
++
++    if(Snpe_IDiagLog_SetOptions(diagLogHandle, optionsHandle) != SNPE_SUCCESS)
++      LOG(INFO)<<"Failed to set DiagLog options";
++
++    if (Snpe_IDiagLog_Start(diagLogHandle) != SNPE_SUCCESS)
++    LOG(INFO)<<"Failed to start logger ";
++  }
+   // Snpe_DlContainer_Delete(containerHandle);
+ }
+ 
+ mlperf_status_t QTIBackendHelper::execute() {
++  if(useIonBuffers_ && !isIonRegistered) {
++    if(Snpe_SNPE_RegisterIonBuffers(snpe_->snpeHandle, ionBufferMapHandle_) == SNPE_SUCCESS)
++    LOG(INFO)<<"Ion Buffer Registration Successful";
++    isIonRegistered = true;
++  }
+   if (!useSnpe_) {
+     if (Snpe_PSNPE_Execute(psnpe_->psnpeHandle, inputMapListHandle_,
+                            outputMapListHandle_) != SNPE_SUCCESS) {
+@@ -317,10 +295,11 @@ void QTIBackendHelper::use_snpe(const char *model_path) {
+ 
+     Snpe_SNPEBuilder_Handle_t snpeBuilderHandle =
+         Snpe_SNPEBuilder_Create(containerHandle);
+-
++    Snpe_SNPEBuilder_SetCpuFixedPointMode(snpeBuilderHandle, useCpuInt8_);
+     Snpe_StringList_Handle_t outputLayers =
+         ResolveOutputLayerNames(snpeOutputLayers_);
+     Snpe_SNPEBuilder_SetPerformanceProfile(snpeBuilderHandle, perfProfile_);
++    Snpe_SNPEBuilder_SetProfilingLevel(snpeBuilderHandle, profilingLevel_);
+     Snpe_SNPEBuilder_SetExecutionPriorityHint(snpeBuilderHandle,
+                                               SNPE_EXECUTION_PRIORITY_HIGH);
+     Snpe_SNPEBuilder_SetRuntimeProcessorOrder(snpeBuilderHandle,
+@@ -329,10 +308,6 @@ void QTIBackendHelper::use_snpe(const char *model_path) {
+     Snpe_SNPEBuilder_SetOutputLayers(snpeBuilderHandle, outputLayers);
+ 
+     std::string platformOptionStr = "";
+-    if (Socs::get_use_dsp_features() && isSignedStatus == UNSIGNED_PD) {
+-      // use unsignedPD feature for untrusted app.
+-      platformOptionStr += "unsignedPD:ON";
+-    }
+     if (Socs::soc_check_feature(useIonBuffers_, platformOptionStr)) {
+       Snpe_SNPEBuilder_SetInitCacheMode(snpeBuilderHandle, true);
+     }
+@@ -357,41 +332,59 @@ void QTIBackendHelper::use_snpe(const char *model_path) {
+   if (!snpe_->snpeHandle) {
+     LOG(FATAL) << "Error in init of the model " << snpe_;
+   }
++
++  if(profilingLevel_ !=  SNPE_PROFILING_LEVEL_OFF){
++    auto diagLogHandle = Snpe_SNPE_GetDiagLogInterface_Ref(snpe_->snpeHandle);
++     if (!diagLogHandle)
++      LOG(INFO)<<"Get diagLogHandle failed";
++    auto optionsHandle = Snpe_IDiagLog_GetOptions(diagLogHandle);
++    std::string OutputDir = ".\diaglogs";
++    #ifdef __ANDROID__
++    OutputDir = "/sdcard/Android/data/org.mlcommons.android.mlperfbench/files/diaglogs";
++    #endif
++    Snpe_Options_SetLogFileDirectory(optionsHandle, OutputDir.c_str());
++
++    if(Snpe_IDiagLog_SetOptions(diagLogHandle, optionsHandle) != SNPE_SUCCESS)
++      LOG(INFO)<<"Failed to set DiagLog options";
++
++    if (Snpe_IDiagLog_Start(diagLogHandle) != SNPE_SUCCESS)
++    LOG(INFO)<<"Failed to start logger ";
++  }
+ }
+ 
+ inline int QTIBackendHelper::get_num_inits() { return Socs::soc_num_inits(); }
+ 
+-void QTIBackendHelper::get_accelerator_instances(int &num_dsp, int &num_aip,
+-                                                 int &num_gpu, int &num_cpu) {
++void QTIBackendHelper::get_accelerator_instances(int &num_dsp,
++                                                 int &num_gpu, int &num_cpu, int &num_gpu_fp16) {
+   std::string &delegate = delegate_;
+   num_dsp = 0;
+-  num_aip = 0;
+   num_gpu = 0;
+   num_cpu = 0;
++  num_gpu_fp16 = 0;
+   if (scenario_ == "Offline") {
+-    // For 865 use DSP+AIP
+-    Socs::soc_offline_core_instance(num_dsp, num_aip, num_gpu, num_cpu,
++    Socs::soc_offline_core_instance(num_dsp, num_gpu, num_cpu, num_gpu_fp16,
+                                     delegate);
+   } else {
+     if (delegate == "snpe_dsp" || delegate == "psnpe_dsp") {
+       num_dsp = 1;
+       Socs::set_use_dsp_features(true);
+-    } else if (delegate == "snpe_aip" || delegate == "psnpe_aip") {
+-      num_aip = 1;
+-      Socs::set_use_dsp_features(true);
+     } else if (delegate == "snpe_gpu" || delegate == "psnpe_gpu") {
+       num_gpu = 1;
+       Socs::set_use_dsp_features(false);
+     } else if (delegate == "snpe_cpu" || delegate == "psnpe_cpu") {
+       num_cpu = 1;
+       Socs::set_use_dsp_features(false);
+-    } else {
+-      LOG(FATAL) << "Error: Unsupported delegate " << delegate << " SoC ID "
+-                 << Socs::get_soc_name();
++    } else if (delegate == "snpe_gpu_fp16" || delegate == "psnpe_gpu_fp16") {
++      num_gpu_fp16 = 1;
++      Socs::set_use_dsp_features(false);
+     }
+-  }
+-  LOG(INFO) << "Using " << num_dsp << " dsp " << num_aip << " aip " << num_gpu
+-            << " gpu and " << num_cpu << " cpu";
++      else {
++        LOG(FATAL) << "Error: Unsupported delegate " << delegate << " SoC ID "
++                   << Socs::get_soc_name();
++      }
++    }
++  LOG(INFO) << "Using " << num_dsp << " dsp " << num_gpu
++            << " gpu" << num_cpu << " cpu" << num_gpu_fp16 << " gpu_fp16";
+ }
+ 
+ void QTIBackendHelper::map_inputs() {
+@@ -495,6 +488,8 @@ void QTIBackendHelper::map_outputs() {
+                                                bufSize * sizeof(uint8_t),
+                                                stridesHandle, ubeTfN));
+         Snpe_UserBufferMap_Add(outputMapHandle, name, x.back());
++        if(useIonBuffers_)
++          Snpe_UserMemoryMap_Add(ionBufferMapHandle_, name, bufs_[bi].at(name).data());
+ 
+         Snpe_UserBufferEncodingTfN_Delete(ubeTfN);
+         Snpe_TensorShape_Delete(stridesHandle);
+@@ -511,6 +506,8 @@ void QTIBackendHelper::map_outputs() {
+                                                stridesHandle, ubeIntN));
+ 
+         Snpe_UserBufferMap_Add(outputMapHandle, name, x.back());
++        if(useIonBuffers_)
++          Snpe_UserMemoryMap_Add(ionBufferMapHandle_, name, bufs_[bi].at(name).data());
+ 
+         Snpe_UserBufferEncodingIntN_Delete(ubeIntN);
+         Snpe_TensorShape_Delete(stridesHandle);
+@@ -527,6 +524,8 @@ void QTIBackendHelper::map_outputs() {
+             bufs_[bi].at(name).data(), bufSize * sizeof(float), stridesHandle,
+             userBufferEncodingFloat));
+         Snpe_UserBufferMap_Add(outputMapHandle, name, x.back());
++        if(useIonBuffers_)
++            Snpe_UserMemoryMap_Add(ionBufferMapHandle_, name, bufs_[bi].at(name).data());
+ 
+         Snpe_UserBufferEncodingFloat_Delete(userBufferEncodingFloat);
+         Snpe_TensorShape_Delete(stridesHandle);
+@@ -626,8 +625,8 @@ void QTIBackendHelper::get_data_formats() {
+ }
+ 
+ void QTIBackendHelper::set_runtime_config() {
+-  int numDSP = 0, numAIP = 0, numGPU = 0, numCPU = 0;
+-  get_accelerator_instances(numDSP, numAIP, numGPU, numCPU);
++  int numDSP = 0, numGPU = 0, numCPU = 0, numGPU_FP16=0;
++  get_accelerator_instances(numDSP, numGPU, numCPU, numGPU_FP16);
+ 
+   Snpe_Runtime_t runtime;
+   for (int i = 0; i < numDSP; i++) {
+@@ -645,9 +644,9 @@ void QTIBackendHelper::set_runtime_config() {
+     Snpe_RuntimeConfig_Delete(runtimeConfigHandle);
+   }
+ 
+-  for (int i = 0; i < numAIP; i++) {
++  for (int i = 0; i < numGPU; i++) {
+     if (i == 0) {
+-      runtime = Str2Delegate(SNPE_AIP);
++      runtime = Str2Delegate(SNPE_GPU);
+     }
+     auto runtimeConfigHandle = Snpe_RuntimeConfig_Create();
+     Snpe_RuntimeConfig_SetRuntime(runtimeConfigHandle, runtime);
+@@ -655,13 +654,12 @@ void QTIBackendHelper::set_runtime_config() {
+     Snpe_RuntimeConfigList_PushBack(runtimeConfigsListHandle,
+                                     runtimeConfigHandle);
+     Snpe_RuntimeList_Add(inputRuntimeListHandle, runtime);
+-
+     Snpe_RuntimeConfig_Delete(runtimeConfigHandle);
+   }
+ 
+-  for (int i = 0; i < numGPU; i++) {
++  for (int i = 0; i < numCPU; i++) {
+     if (i == 0) {
+-      runtime = Str2Delegate(SNPE_GPU);
++      runtime = Str2Delegate(SNPE_CPU);
+     }
+     auto runtimeConfigHandle = Snpe_RuntimeConfig_Create();
+     Snpe_RuntimeConfig_SetRuntime(runtimeConfigHandle, runtime);
+@@ -672,9 +670,9 @@ void QTIBackendHelper::set_runtime_config() {
+     Snpe_RuntimeConfig_Delete(runtimeConfigHandle);
+   }
+ 
+-  for (int i = 0; i < numCPU; i++) {
++  for (int i = 0; i < numGPU_FP16; i++) {
+     if (i == 0) {
+-      runtime = Str2Delegate(SNPE_CPU);
++      runtime = Str2Delegate(SNPE_GPU_FP16);
+     }
+     auto runtimeConfigHandle = Snpe_RuntimeConfig_Create();
+     Snpe_RuntimeConfig_SetRuntime(runtimeConfigHandle, runtime);
+@@ -682,6 +680,7 @@ void QTIBackendHelper::set_runtime_config() {
+     Snpe_RuntimeConfigList_PushBack(runtimeConfigsListHandle,
+                                     runtimeConfigHandle);
+     Snpe_RuntimeList_Add(inputRuntimeListHandle, runtime);
++
+     Snpe_RuntimeConfig_Delete(runtimeConfigHandle);
+   }
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/qti_backend_helper.h b/mobile_back_qti/cpp/backend_qti/qti_backend_helper.h
+index e5e4c3c..29cc938 100644
+--- a/mobile_back_qti/cpp/backend_qti/qti_backend_helper.h
++++ b/mobile_back_qti/cpp/backend_qti/qti_backend_helper.h
+@@ -25,10 +25,6 @@ limitations under the License.
+ #include "flutter/cpp/c/backend_c.h"
+ #include "flutter/cpp/c/type.h"
+ 
+-#define SIGNED_PD 0
+-#define UNSIGNED_PD 1
+-#define DEFAULT -1
+-
+ class snpe_handler {
+  public:
+   Snpe_SNPE_Handle_t snpeHandle;
+@@ -45,7 +41,7 @@ class psnpe_handler {
+   ~psnpe_handler() { Snpe_PSNPE_Delete(psnpeHandle); }
+ };
+ 
+-enum snpe_runtimes_t { SNPE_DSP = 0, SNPE_AIP = 1, SNPE_GPU = 2, SNPE_CPU = 3 };
++enum snpe_runtimes_t { SNPE_DSP = 0, SNPE_GPU = 1, SNPE_CPU = 2, SNPE_GPU_FP16 =3 };
+ 
+ class QTIBackendHelper {
+  private:
+@@ -54,13 +50,11 @@ class QTIBackendHelper {
+   Snpe_RuntimeConfigList_Handle_t runtimeConfigsListHandle;
+ 
+   inline int get_num_inits();
+-  void get_accelerator_instances(int &numDSP, int &numAIP, int &numGPU,
+-                                 int &numCPU);
++  void get_accelerator_instances(int &numDSP, int &numGPU,
++                                 int &numCPU, int &numGPU_FP16);
+ 
+  public:
+   enum QTIBufferType { FLOAT_32 = 0, UINT_8 = 1, INT_32 = 2 };
+-  using GetBufferFn = std::add_pointer<void *(size_t, int)>::type;
+-  using ReleaseBufferFn = std::add_pointer<void(void *)>::type;
+   const char *name_ = "snpe";
+   const char *acceleratorName_;
+   std::string snpeOutputLayers_;
+@@ -69,6 +63,7 @@ class QTIBackendHelper {
+   std::unique_ptr<psnpe_handler> psnpe_;
+   std::unique_ptr<snpe_handler> snpe_;
+   Snpe_UserBufferList_Handle_t inputMapListHandle_, outputMapListHandle_;
++  Snpe_UserMemoryMap_Handle_t ionBufferMapHandle_;
+   std::vector<
+       std::unordered_map<std::string, std::vector<uint8_t, Allocator<uint8_t>>>>
+       bufs_;
+@@ -77,6 +72,7 @@ class QTIBackendHelper {
+   Snpe_StringList_Handle_t networkInputTensorNamesHandle_;
+   Snpe_StringList_Handle_t networkOutputTensorNamesHandle_;
+   Snpe_PerformanceProfile_t perfProfile_;
++  Snpe_ProfilingLevel_t profilingLevel_;
+ 
+   bool isTflite_;
+   bool useSnpe_;
+@@ -85,15 +81,15 @@ class QTIBackendHelper {
+   int queryCount_;
+   int inputBatch_;
+   int outputBatchBufsize_;
+-  GetBufferFn getBuffer_;
+-  ReleaseBufferFn releaseBuffer_;
+   bool bgLoad_;
+   std::string delegate_;
+   QTIBufferType inputBufferType_ = UINT_8;
+   QTIBufferType outputBufferType_ = FLOAT_32;
+   uint32_t loadOffTime_ = 2;
+   uint32_t loadOnTime_ = 100;
+-  bool useIonBuffers_ = true;
++  bool useIonBuffers_ = false;
++  bool useCpuInt8_ = false;
++  bool isIonRegistered;
+ 
+   /* exposed functions */
+   void use_psnpe(const char *model_path);
+@@ -122,6 +118,8 @@ class QTIBackendHelper {
+     odLayerMap[2] = "detection_scores:0";
+     odLayerMap[3] =
+         "Postprocessor/BatchMultiClassNonMaxSuppression_num_detections";
++    ionBufferMapHandle_ = Snpe_UserMemoryMap_Create();
++    isIonRegistered = false;
+   }
+ 
+   ~QTIBackendHelper() {
+diff --git a/mobile_back_qti/cpp/backend_qti/qti_c.cc b/mobile_back_qti/cpp/backend_qti/qti_c.cc
+index 9ce89af..ea95660 100644
+--- a/mobile_back_qti/cpp/backend_qti/qti_c.cc
++++ b/mobile_back_qti/cpp/backend_qti/qti_c.cc
+@@ -102,23 +102,12 @@ mlperf_backend_ptr_t mlperf_backend_create(
+   if (backend_data->isTflite_) {
+     CpuCtrl::highLatency();
+     backend_data->tfliteBackend_ = tflite_backend_create(model_path, configs);
+-    backend_data->getBuffer_ = std_get_buffer;
+-    backend_data->releaseBuffer_ = std_release_buffer;
+     return backend_data;
+   }
+ 
+   // use lowLatency cores for all snpe models
+   CpuCtrl::lowLatency();
+ 
+-  // Set buffers to be used for snpe
+-  if (backend_data->useIonBuffers_) {
+-    backend_data->getBuffer_ = get_ion_buffer;
+-    backend_data->releaseBuffer_ = release_ion_buffer;
+-  } else {
+-    backend_data->getBuffer_ = std_get_buffer;
+-    backend_data->releaseBuffer_ = std_release_buffer;
+-  }
+-
+ #ifdef __ANDROID__
+   std::stringstream adsp_lib_path;
+   adsp_lib_path << native_lib_path << ";";
+@@ -329,11 +318,27 @@ mlperf_status_t mlperf_backend_get_output(mlperf_backend_ptr_t backend_ptr,
+ }
+ 
+ void *mlperf_backend_get_buffer(size_t n) {
+-  return backend_data_->getBuffer_(n, backend_data_->inputBatch_);
++  auto batchedDataPtr = get_buffer(n, backend_data_->inputBatch_);
++
++  if(backend_data_->useIonBuffers_) {
++    const char *name = Snpe_StringList_At(backend_data_->networkInputTensorNamesHandle_, 0);
++    Snpe_UserMemoryMap_Add(backend_data_->ionBufferMapHandle_, name, batchedDataPtr);
++  }
++  return batchedDataPtr;
+ }
+ 
+ void mlperf_backend_release_buffer(void *p) {
+-  backend_data_->releaseBuffer_(p);
++if(backend_data_->useIonBuffers_ && backend_data_->isIonRegistered) {
++    Snpe_StringList_Handle_t userBufferNames = Snpe_UserMemoryMap_GetUserBufferNames(backend_data_->ionBufferMapHandle_);
++    if(Snpe_SNPE_DeregisterIonBuffers(backend_data_->snpe_->snpeHandle, userBufferNames) != SNPE_SUCCESS)
++        LOG(INFO)<<"Deregistration Failed !";
++
++      auto input_buffer_name = Snpe_StringList_At(userBufferNames, 0);
++      Snpe_UserMemoryMap_Remove(backend_data_->ionBufferMapHandle_, input_buffer_name);
++      Snpe_StringList_Delete(userBufferNames);
++      backend_data_->isIonRegistered = false;
++      }
++  release_buffer(p);
+ }
+ 
+ #ifdef __cplusplus
+diff --git a/mobile_back_qti/cpp/backend_qti/qti_settings.h b/mobile_back_qti/cpp/backend_qti/qti_settings.h
+index b0178e3..a511c4f 100644
+--- a/mobile_back_qti/cpp/backend_qti/qti_settings.h
++++ b/mobile_back_qti/cpp/backend_qti/qti_settings.h
+@@ -33,11 +33,14 @@ const std::string empty_settings = "";
+ #include INCLUDE_SETTINGS(sd7g1)
+ #include INCLUDE_SETTINGS(sd7pg2)
+ #include INCLUDE_SETTINGS(sd8cxg3)
++#include INCLUDE_SETTINGS(sd7cxg3)
+ #include INCLUDE_SETTINGS(sd8g1)
+ #include INCLUDE_SETTINGS(sd8g2)
++#include INCLUDE_SETTINGS(gpufp16)
+ #include INCLUDE_SETTINGS(sd8pg1)
+ #include INCLUDE_SETTINGS(sdm778)
+ #include INCLUDE_SETTINGS(sdm888)
++#include INCLUDE_SETTINGS(sm4450)
+ #include INCLUDE_SETTINGS(default_dsp)
+ #include INCLUDE_SETTINGS(default_cpu)
+ #include INCLUDE_SETTINGS(default_gpu)
+@@ -45,11 +48,14 @@ const std::string empty_settings = "";
+ STRING_SETTINGS(sd7g1)
+ STRING_SETTINGS(sd7pg2)
+ STRING_SETTINGS(sd8cxg3)
++STRING_SETTINGS(sd7cxg3)
+ STRING_SETTINGS(sd8g1)
+ STRING_SETTINGS(sd8g2)
++STRING_SETTINGS(gpufp16)
+ STRING_SETTINGS(sd8pg1)
+ STRING_SETTINGS(sdm778)
+ STRING_SETTINGS(sdm888)
++STRING_SETTINGS(sm4450)
+ STRING_SETTINGS(default_dsp)
+ STRING_SETTINGS(default_cpu)
+ STRING_SETTINGS(default_gpu)
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_cpu.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_cpu.pbtxt
+index 59454a0..61e1b25 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_cpu.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_cpu.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_CPU"
+ }
+@@ -40,7 +40,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 128
+   custom_setting {
+     id: "use_ion_buffer"
+     value: "false"
+@@ -54,8 +53,9 @@ benchmark_setting {
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "psnpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc"
+-    model_checksum: "78a54fc8913d4fa654dcd41a26850c1e"
++    batch_size: 128
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_CPU"
+ }
+@@ -76,16 +76,14 @@ benchmark_setting {
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_CPU"
+ }
+ 
+ benchmark_setting {
+   benchmark_id: "natural_language_processing"
+-  accelerator: "snpe_dsp"
+-  accelerator_desc: "HTP"
+   framework: "SNPE"
+   custom_setting {
+     id: "snpe_output_layers"
+@@ -104,8 +102,8 @@ benchmark_setting {
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_CPU"
+ }
+@@ -130,9 +128,8 @@ benchmark_setting {
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
+-  }
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   delegate_selected: "SNPE_CPU"
+ }
+ 
+@@ -152,8 +149,8 @@ benchmark_setting {
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_CPU"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_dsp.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_dsp.pbtxt
+index ea2ef59..dc2b4bc 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_dsp.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_dsp.pbtxt
+@@ -35,8 +35,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -44,7 +44,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -62,8 +61,9 @@ benchmark_setting {
+     delegate_name: "SNPE_HTP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc"
+-    model_checksum: "78a54fc8913d4fa654dcd41a26850c1e"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_HTP"
+ }
+@@ -88,16 +88,14 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+ 
+ benchmark_setting {
+   benchmark_id: "natural_language_processing"
+-  accelerator: "snpe_dsp"
+-  accelerator_desc: "HTP"
+   framework: "SNPE"
+   custom_setting {
+     id: "snpe_output_layers"
+@@ -124,8 +122,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -154,8 +152,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -184,8 +182,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_gpu.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_gpu.pbtxt
+index 4889a77..806dd72 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_gpu.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_default_gpu.pbtxt
+@@ -31,16 +31,16 @@ benchmark_setting {
+     delegate_name: "SNPE_GPU"
+     accelerator_name: "snpe_gpu"
+     accelerator_desc: "GPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_choice: {
+     priority: 2
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_GPU"
+ }
+@@ -48,7 +48,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 128
+   custom_setting {
+     id: "use_ion_buffer"
+     value: "false"
+@@ -62,16 +61,18 @@ benchmark_setting {
+     delegate_name: "SNPE_GPU"
+     accelerator_name: "psnpe_gpu"
+     accelerator_desc: "GPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc"
+-    model_checksum: "78a54fc8913d4fa654dcd41a26850c1e"
++    batch_size: 128
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_choice: {
+     priority: 2
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "psnpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc"
+-    model_checksum: "78a54fc8913d4fa654dcd41a26850c1e"
++    batch_size: 128
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_GPU"
+ }
+@@ -92,16 +93,16 @@ benchmark_setting {
+     delegate_name: "SNPE_GPU"
+     accelerator_name: "snpe_gpu"
+     accelerator_desc: "GPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_choice: {
+     priority: 2
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_GPU"
+ }
+@@ -126,16 +127,16 @@ benchmark_setting {
+     delegate_name: "SNPE_GPU"
+     accelerator_name: "snpe_gpu"
+     accelerator_desc: "GPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_choice: {
+     priority: 2
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_GPU"
+ }
+@@ -160,16 +161,16 @@ benchmark_setting {
+     delegate_name: "SNPE_GPU"
+     accelerator_name: "snpe_gpu"
+     accelerator_desc: "GPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_choice: {
+     priority: 2
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_GPU"
+ }
+@@ -190,16 +191,16 @@ benchmark_setting {
+     delegate_name: "SNPE_GPU"
+     accelerator_name: "snpe_gpu"
+     accelerator_desc: "GPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_choice: {
+     priority: 2
+     delegate_name: "SNPE_CPU"
+     accelerator_name: "snpe_cpu"
+     accelerator_desc: "CPU"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_GPU"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_gpufp16.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_gpufp16.pbtxt
+new file mode 100644
+index 0000000..6df9301
+--- /dev/null
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_gpufp16.pbtxt
+@@ -0,0 +1,152 @@
++# proto-file: flutter/cpp/proto/backend_setting.proto
++# proto-message: BackendSetting
++
++common_setting {
++  id: "num_threads"
++  name: "Number of threads"
++  value {
++    value: "4"
++    name: "4 threads"
++  }
++}
++
++common_setting {
++  id: "profiling_level"
++  name: "profile level"
++  value {
++    value: "off"
++    name: "profile level"
++  }
++}
++
++benchmark_setting {
++  benchmark_id: "image_classification"
++  framework: "SNPE"
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_GPU_FP16"
++    accelerator_name: "snpe_gpu_fp16"
++    accelerator_desc: "GPU_FP16"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
++  }
++  single_stream_expected_latency_ns: 500000
++  delegate_selected: "SNPE_GPU_FP16"
++}
++
++benchmark_setting {
++  benchmark_id: "image_classification_offline"
++  framework: "SNPE"
++  custom_setting {
++    id: "scenario"
++    value: "Offline"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_GPU_FP16"
++    accelerator_name: "psnpe_gpu_fp16"
++    accelerator_desc: "GPU_FP16"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_GPU_FP16"
++}
++
++benchmark_setting {
++  benchmark_id: "natural_language_processing"
++  framework: "SNPE"
++  custom_setting {
++    id: "snpe_output_layers"
++    value: "transpose"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "input_buffer_type"
++    value: "float_32"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  custom_setting {
++    id: "perf_profile"
++    value: "sustained_high_performance"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_GPU_FP16"
++    accelerator_name: "snpe_gpu_fp16"
++    accelerator_desc: "GPU_FP16"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
++    }
++  delegate_selected: "SNPE_GPU_FP16"
++}
++
++benchmark_setting {
++  benchmark_id: "image_segmentation_v2"
++  framework: "SNPE"
++  custom_setting {
++    id: "input_buffer_type"
++    value: "uint_8"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  custom_setting {
++    id: "output_buffer_type"
++    value: "int_32"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_GPU_FP16"
++    accelerator_name: "snpe_gpu_fp16"
++    accelerator_desc: "GPU_FP16"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_GPU_FP16"
++}
++
++benchmark_setting {
++  benchmark_id: "super_resolution"
++  framework: "SNPE"
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  custom_setting {
++    id: "input_buffer_type"
++    value: "uint_8"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  custom_setting {
++    id: "perf_profile"
++    value: "burst"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_GPU_FP16"
++    accelerator_name: "snpe_gpu_fp16"
++    accelerator_desc: "GPU_FP16"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_GPU_FP16"
++}
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7cxg3.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7cxg3.pbtxt
+new file mode 100644
+index 0000000..b1502de
+--- /dev/null
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7cxg3.pbtxt
+@@ -0,0 +1,161 @@
++# proto-file: flutter/cpp/proto/backend_setting.proto
++# proto-message: BackendSetting
++
++common_setting {
++  id: "num_threads"
++  name: "Number of threads"
++  value {
++    value: "4"
++    name: "4 threads"
++  }
++}
++
++common_setting {
++  id: "profiling_level"
++  name: "profile level"
++  value {
++    value: "off"
++    name: "profile level"
++  }
++}
++
++benchmark_setting {
++  benchmark_id: "image_classification"
++  framework: "SNPE"
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_DSP"
++    accelerator_name: "snpe_dsp"
++    accelerator_desc: "HTP"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_DSP"
++}
++
++benchmark_setting {
++  benchmark_id: "image_classification_offline"
++  framework: "SNPE"
++  custom_setting {
++    id: "scenario"
++    value: "Offline"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_DSP"
++    accelerator_name: "psnpe_dsp"
++    accelerator_desc: "HTP"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_8.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_DSP"
++}
++
++benchmark_setting {
++  benchmark_id: "object_detection"
++  framework: "SNPE"
++  custom_setting {
++    id: "snpe_output_layers"
++    value: "Postprocessor/BatchMultiClassNonMaxSuppression"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_DSP"
++    accelerator_name: "snpe_dsp"
++    accelerator_desc: "HTP"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_DSP"
++}
++
++benchmark_setting {
++  benchmark_id: "natural_language_processing"
++  framework: "SNPE"
++  custom_setting {
++    id: "snpe_output_layers"
++    value: "transpose"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  custom_setting {
++    id: "input_buffer_type"
++    value: "float_32"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_DSP"
++    accelerator_name: "snpe_dsp"
++    accelerator_desc: "DSP"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_DSP"
++}
++
++benchmark_setting {
++  benchmark_id: "image_segmentation_v2"
++  framework: "SNPE"
++  custom_setting {
++    id: "input_buffer_type"
++    value: "uint_8"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  custom_setting {
++    id: "output_buffer_type"
++    value: "int_32"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_DSP"
++    accelerator_name: "snpe_dsp"
++    accelerator_desc: "DSP"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_DSP"
++}
++
++benchmark_setting {
++  benchmark_id: "super_resolution"
++  framework: "SNPE"
++  custom_setting {
++    id: "bg_load"
++    value: "true"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_DSP"
++    accelerator_name: "snpe_dsp"
++    accelerator_desc: "DSP"
++    model_path: "local:///mlperf_models//snusr_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_DSP"
++}
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7g1.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7g1.pbtxt
+index cb8dd84..116a2aa 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7g1.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7g1.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -40,7 +40,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -54,8 +53,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd7g1.dlc"
+-    model_checksum: "dc8c71f98e67af3667c7dcdf531ce661"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -76,16 +76,14 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+ 
+ benchmark_setting {
+   benchmark_id: "natural_language_processing"
+-  accelerator: "snpe_dsp"
+-  accelerator_desc: "HTP"
+   framework: "SNPE"
+   custom_setting {
+     id: "snpe_output_layers"
+@@ -112,8 +110,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -138,8 +136,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -155,6 +153,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -164,8 +166,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models//snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7pg2.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7pg2.pbtxt
+index 6b81d34..5a4d66e 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7pg2.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd7pg2.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   single_stream_expected_latency_ns: 600000
+   delegate_selected: "SNPE_DSP"
+@@ -41,7 +41,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -55,8 +54,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc"
+-    model_checksum: "59535a0aae60d21ddf35bbcac79a4c71"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -77,8 +77,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -111,8 +111,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -137,8 +137,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -154,6 +154,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -163,8 +167,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models//snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8cxg3.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8cxg3.pbtxt
+index a2125c7..9cc2521 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8cxg3.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8cxg3.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   single_stream_expected_latency_ns: 600000
+   delegate_selected: "SNPE_DSP"
+@@ -41,7 +41,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -55,8 +54,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8cxg3.dlc"
+-    model_checksum: "4a73e95f0b48384daf94fc53d4a2aec3"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_8.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -77,16 +77,14 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+ 
+ benchmark_setting {
+   benchmark_id: "natural_language_processing"
+-  accelerator: "snpe_dsp"
+-  accelerator_desc: "HTP"
+   framework: "SNPE"
+   custom_setting {
+     id: "snpe_output_layers"
+@@ -109,8 +107,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -135,8 +133,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -148,13 +146,17 @@ benchmark_setting {
+     id: "bg_load"
+     value: "true"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   delegate_choice: {
+     priority: 1
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models//snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g1.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g1.pbtxt
+index 3cd19dd..e1b1d60 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g1.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g1.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   single_stream_expected_latency_ns: 800000
+   delegate_selected: "SNPE_DSP"
+@@ -41,7 +41,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -55,8 +54,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched.dlc"
+-    model_checksum: "b9034e23621f96c86160101928e8e8ea"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -77,8 +77,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -111,8 +111,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -137,8 +137,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -154,6 +154,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -163,8 +167,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g2.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g2.pbtxt
+index 87066bc..ac55c3c 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g2.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8g2.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   single_stream_expected_latency_ns: 500000
+   delegate_selected: "SNPE_DSP"
+@@ -41,7 +41,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -55,8 +54,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8g2.dlc"
+-    model_checksum: "78a54fc8913d4fa654dcd41a26850c1e"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -77,8 +77,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -111,8 +111,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -136,9 +136,9 @@ benchmark_setting {
+     priority: 1
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+-    accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    accelerator_desc: "HTP"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -154,6 +154,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -163,8 +167,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8pg1.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8pg1.pbtxt
+index d858e1b..bd312b7 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8pg1.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sd8pg1.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   single_stream_expected_latency_ns: 600000
+   delegate_selected: "SNPE_DSP"
+@@ -41,7 +41,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -55,8 +54,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc"
+-    model_checksum: "59535a0aae60d21ddf35bbcac79a4c71"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -77,8 +77,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -111,8 +111,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -137,8 +137,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -154,6 +154,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -163,8 +167,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm778.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm778.pbtxt
+index 6731778..f4aa0c7 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm778.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm778.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -40,7 +40,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -50,8 +49,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched.dlc"
+-    model_checksum: "b9034e23621f96c86160101928e8e8ea"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -72,8 +72,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -106,8 +106,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -132,8 +132,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -149,6 +149,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -158,8 +162,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm888.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm888.pbtxt
+index 6731778..f4aa0c7 100644
+--- a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm888.pbtxt
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sdm888.pbtxt
+@@ -31,8 +31,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp.dlc"
+-    model_checksum: "2e7c4d33b480b5566bdf05e1204b6152"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -40,7 +40,6 @@ benchmark_setting {
+ benchmark_setting {
+   benchmark_id: "image_classification_offline"
+   framework: "SNPE"
+-  batch_size: 12288
+   custom_setting {
+     id: "scenario"
+     value: "Offline"
+@@ -50,8 +49,9 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "psnpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilenet_edgetpu_224_1.0_htp_batched.dlc"
+-    model_checksum: "b9034e23621f96c86160101928e8e8ea"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -72,8 +72,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "HTP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/ssd_mobiledet_qat_htp.dlc"
+-    model_checksum: "65937d5b58414d86fc42872945e2f5cf"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -106,8 +106,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobilebert_quantized_htp.dlc"
+-    model_checksum: "6dc1f1a47a764381b00c8423b07caac1"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -132,8 +132,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/mobile_mosaic_htp.dlc"
+-    model_checksum: "e921828320d251a5f7160952bbd750ec"
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+@@ -149,6 +149,10 @@ benchmark_setting {
+     id: "input_buffer_type"
+     value: "uint_8"
+   }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
+   custom_setting {
+     id: "perf_profile"
+     value: "burst"
+@@ -158,8 +162,8 @@ benchmark_setting {
+     delegate_name: "SNPE_DSP"
+     accelerator_name: "snpe_dsp"
+     accelerator_desc: "DSP"
+-    model_path: "https://github.com/mlcommons/mobile_models/releases/download/v3.0-snpe/snusr_htp.dlc"
+-    model_checksum: "3dc4b1e7ae23620704d76b56f88527d0"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
+   }
+   delegate_selected: "SNPE_DSP"
+ }
+diff --git a/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sm4450.pbtxt b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sm4450.pbtxt
+new file mode 100644
+index 0000000..837ae21
+--- /dev/null
++++ b/mobile_back_qti/cpp/backend_qti/settings/qti_settings_sm4450.pbtxt
+@@ -0,0 +1,213 @@
++# proto-file: flutter/cpp/proto/backend_setting.proto
++# proto-message: BackendSetting
++
++common_setting {
++  id: "num_threads"
++  name: "Number of threads"
++  value {
++    value: "4"
++    name: "4 threads"
++  }
++}
++
++common_setting {
++  id: "profiling_level"
++  name: "profile level"
++  value {
++    value: "off"
++    name: "profile level"
++  }
++}
++
++benchmark_setting {
++  benchmark_id: "image_classification"
++  framework: "SNPE"
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    custom_setting {
++      id: "cpu_int8"
++      value: "true"
++    }
++    delegate_name: "SNPE_CPU"
++    accelerator_name: "snpe_cpu"
++    accelerator_desc: "CPU"
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_CPU"
++}
++
++benchmark_setting {
++  benchmark_id: "image_classification_offline"
++  framework: "SNPE"
++  custom_setting {
++    id: "scenario"
++    value: "Offline"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    custom_setting {
++      id: "cpu_int8"
++      value: "true"
++    }
++    delegate_name: "SNPE_CPU"
++    accelerator_name: "psnpe_cpu"
++    accelerator_desc: "CPU"
++    batch_size: 12288
++    model_path: "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_3.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_CPU"
++}
++
++benchmark_setting {
++  benchmark_id: "object_detection"
++  framework: "SNPE"
++  custom_setting {
++    id: "snpe_output_layers"
++    value: "Postprocessor/BatchMultiClassNonMaxSuppression"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  custom_setting {
++    id: "cpu_int8"
++    value: "true"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_CPU"
++    accelerator_name: "snpe_cpu"
++    accelerator_desc: "CPU"
++    model_path: "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_CPU"
++}
++
++benchmark_setting {
++  benchmark_id: "natural_language_processing"
++  framework: "SNPE"
++  custom_setting {
++    id: "snpe_output_layers"
++    value: "transpose"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "input_buffer_type"
++    value: "float_32"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    custom_setting {
++      id: "cpu_int8"
++      value: "true"
++    }
++    delegate_name: "SNPE_CPU"
++    accelerator_name: "snpe_cpu"
++    accelerator_desc: "CPU"
++    model_path: "local:///mlperf_models/mobilebert_quantized_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_CPU"
++}
++
++benchmark_setting {
++  benchmark_id: "image_segmentation_v2"
++  framework: "SNPE"
++  custom_setting {
++    id: "input_buffer_type"
++    value: "uint_8"
++  }
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "output_buffer_type"
++    value: "int_32"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    delegate_name: "SNPE_CPU"
++    accelerator_name: "snpe_cpu"
++    accelerator_desc: "CPU"
++    custom_setting {
++      id: "cpu_int8"
++      value: "true"
++    }
++    model_path: "local:///mlperf_models/mobile_mosaic_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_CPU"
++}
++
++benchmark_setting {
++  benchmark_id: "super_resolution"
++  framework: "SNPE"
++  custom_setting {
++    id: "bg_load"
++    value: "false"
++  }
++  custom_setting {
++    id: "input_buffer_type"
++    value: "uint_8"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  custom_setting {
++    id: "perf_profile"
++    value: "burst"
++  }
++  custom_setting {
++    id: "use_ion_buffer"
++    value: "false"
++  }
++  delegate_choice: {
++    priority: 1
++    custom_setting {
++      id: "cpu_int8"
++      value: "true"
++    }
++    delegate_name: "SNPE_CPU"
++    accelerator_name: "snpe_cpu"
++    accelerator_desc: "CPU"
++    model_path: "local:///mlperf_models/snusr_htp.dlc"
++    model_checksum: ""
++  }
++  delegate_selected: "SNPE_CPU"
++}
+diff --git a/mobile_back_qti/cpp/backend_qti/soc_utility.cc b/mobile_back_qti/cpp/backend_qti/soc_utility.cc
+index 36db830..aa86439 100644
+--- a/mobile_back_qti/cpp/backend_qti/soc_utility.cc
++++ b/mobile_back_qti/cpp/backend_qti/soc_utility.cc
+@@ -35,13 +35,13 @@ bool Socs::is_init_done;
+ std::map<uint32_t, SocInfo> socDetails =
+     SocProperties(
+         {
+-            // num_dsp, num_aip, num_gpu, num_cpu,
++            // num_dsp, num_gpu, num_cpu,
+             // useDspFeatures, settings,
+             // soc_name, num_inits,
+             // hlc,
+             // llc,
+             // max_cores, needs_rpcmem
+-            {415, SocInfo(2, 0, 0, 0, true, qti_settings_sdm888, "SDM888", 1,
++            {415, SocInfo(2, 0, 0, 0,true, qti_settings_sdm888, "SDM888", 1,
+                           std::vector<int>({0, 1, 2, 3}),
+                           std::vector<int>({4, 5, 6, 7}), 8, true)},
+             {475, SocInfo(2, 0, 0, 0, true, qti_settings_sdm778, "SDM778", 1,
+@@ -74,6 +74,15 @@ std::map<uint32_t, SocInfo> socDetails =
+             {435, SocInfo(2, 0, 0, 0, true, qti_settings_sd8cxg3, "SD8cxG3", 1,
+                           std::vector<int>({0, 1, 2, 3}),
+                           std::vector<int>({4, 5, 6, 7}), 8, false)},
++            {568, SocInfo(0, 0, 1, 0, false, qti_settings_sm4450, "SM4450", 1,
++                          std::vector<int>({0, 1, 2, 3}),
++                          std::vector<int>({4, 5, 6, 7}), 8, true)},
++            {538, SocInfo(2, 0, 0, 0, false, qti_settings_sd8cxg3, "SD8cxG3", 1,
++                          std::vector<int>({0, 1, 2, 3}),
++                          std::vector<int>({4, 5, 6, 7}), 8, false)},
++            {475, SocInfo(2, 0, 0, 0, false, qti_settings_sd7cxg3, "SD7cxG3", 1,
++                          std::vector<int>({0, 1, 2, 3}),
++                          std::vector<int>({4, 5, 6, 7}), 8, false)},
+             {UNSUPPORTED_SOC_ID,
+              SocInfo(2, 0, 0, 0, true, qti_settings_default_dsp, "Snapdragon",
+                      1, std::vector<int>({0, 1, 2, 3}),
+@@ -108,7 +117,13 @@ uint32_t Socs::get_android_soc_id(void) {
+ #define LEVEL_ID(LV1, LV2) ((LV1 << 32) | (LV2))
+ 
+ static std::unordered_map<uint64_t, int> pptt_mappings = {
+-    {LEVEL_ID(113ULL, 449ULL), 435},  // SD8cxG3
++  {LEVEL_ID(113ULL, 449ULL), 435},  // SD8cxG3
++  {LEVEL_ID(136ULL, 555ULL), 538},  // SD8cxG4 Hamoa (SCP_HAMOA)
++  {LEVEL_ID(118ULL, 487ULL), 475},  // SD7cxG3 (SC7280)
++  {LEVEL_ID(118ULL, 488ULL), 475},  // SD7cxG3 (SC7295)
++  {LEVEL_ID(118ULL, 546ULL), 475},  // SD7cxG3 (SC7280P)
++  {LEVEL_ID(118ULL, 553ULL), 475},  // SD7cxG3 (SC8270)
++  {LEVEL_ID(118ULL, 563ULL), 475}   // SD7cxG3 (SC8270P)
+ };
+ 
+ uint32_t Socs::get_windows_soc_id(void) {
+@@ -139,11 +154,17 @@ uint32_t Socs::get_windows_soc_id(void) {
+     return 0;
+   }
+ 
++
+   pptt = (PPPTT)buf;
+-  PPROC_TOPOLOGY_NODE ptn =
+-      (PPROC_TOPOLOGY_NODE)((BYTE *)&(pptt->HeirarchyNodes[0]) +
+-                            pptt->HeirarchyNodes[0].Length);
+-  uint64_t key = (ptn->IdNode.Level1 << 32) | (ptn->IdNode.Level2);
++  uint64_t key = 0;
++  for (uint32_t i = 0; i < pptt->Header.Length; i++) {
++    PPROC_TOPOLOGY_NODE ptn = (PPROC_TOPOLOGY_NODE)((BYTE *)&(pptt->HeirarchyNodes[0]) + i);
++    // According to ACPI spec, type = 2 is the PPTT_ID_TABLE_TYPE
++    if (ptn->Type == 2) {
++      key = (ptn->IdNode.Level1 << 32) | (ptn->IdNode.Level2);
++      break;
++    }
++  }
+ 
+   auto it = pptt_mappings.find(key);
+   if (it != pptt_mappings.end()) {
+@@ -190,16 +211,17 @@ std::string Socs::get_soc_name() {
+   return m_soc_info.m_soc_name;
+ }
+ 
+-void Socs::soc_offline_core_instance(int &num_dsp, int &num_aip, int &num_gpu,
+-                                     int &num_cpu, std::string &delegate) {
++void Socs::soc_offline_core_instance(int &num_dsp, int &num_gpu,
++                                     int &num_cpu, int &num_gpu_fp16, std::string &delegate) {
+   soc_info_init();
+   num_dsp = m_soc_info.m_num_dsp;
+-  num_aip = m_soc_info.m_num_aip;
+   num_gpu = m_soc_info.m_num_gpu;
+   num_cpu = m_soc_info.m_num_cpu;
++  num_gpu_fp16 = m_soc_info.m_num_gpu_fp16;
+ 
+-  if ((num_aip > 0 && delegate != "snpe_aip" && delegate != "psnpe_aip") ||
+-      (delegate != "snpe_dsp" && delegate != "psnpe_dsp")) {
++  if (delegate != "snpe_dsp" && delegate != "psnpe_dsp" &&
++      delegate != "psnpe_cpu" && delegate != "snpe_gpu_fp16" &&
++      delegate != "psnpe_gpu_fp16") {
+     LOG(FATAL) << "Error: Unsupported delegate for offline mode";
+   }
+ }
+@@ -264,7 +286,6 @@ int Socs::soc_check_feature(bool &useIonBuffers_,
+     if (useIonBuffers_) {
+       platformOptionStr += ";useDspZeroCopy:ON";
+     }
+-    platformOptionStr += ";dspPowerSettingContext:ON";
+     return 1;
+   }
+   return 0;
+diff --git a/mobile_back_qti/cpp/backend_qti/soc_utility.h b/mobile_back_qti/cpp/backend_qti/soc_utility.h
+index fa4afd4..31a66b6 100644
+--- a/mobile_back_qti/cpp/backend_qti/soc_utility.h
++++ b/mobile_back_qti/cpp/backend_qti/soc_utility.h
+@@ -33,9 +33,9 @@ class SocInfo {
+  public:
+   SocInfo(std::string soc_name = DEFAULT_SOC_STR)
+       : m_num_dsp(0),
+-        m_num_aip(0),
+         m_num_gpu(0),
+         m_num_cpu(0),
++        m_num_gpu_fp16(0),
+         m_useDspFeatures(false),
+         m_settings(empty_settings),
+         m_soc_name(soc_name),
+@@ -43,14 +43,14 @@ class SocInfo {
+         m_max_cores(0),
+         m_needs_rpcmem(false) {}
+ 
+-  SocInfo(int num_dsp, int num_aip, int num_gpu, int num_cpu,
++  SocInfo(int num_dsp, int num_gpu, int num_cpu, int num_gpu_fp16,
+           bool useDspFeatures, const std::string settings, std::string soc_name,
+           int num_inits, std::vector<int> hlc, std::vector<int> llc,
+           int max_cores, bool needs_rpcmem)
+       : m_num_dsp(num_dsp),
+-        m_num_aip(num_aip),
+         m_num_gpu(num_gpu),
+         m_num_cpu(num_cpu),
++        m_num_gpu_fp16(num_gpu_fp16),
+         m_useDspFeatures(useDspFeatures),
+         m_settings(settings),
+         m_soc_name(soc_name),
+@@ -65,9 +65,9 @@ class SocInfo {
+   }
+ 
+   int m_num_dsp;
+-  int m_num_aip;
+   int m_num_gpu;
+   int m_num_cpu;
++  int m_num_gpu_fp16;
+   int m_num_inits;
+   bool m_useDspFeatures;
+   std::string m_settings;
+@@ -96,8 +96,8 @@ class Socs {
+  public:
+   static void soc_info_init();
+ 
+-  static void soc_offline_core_instance(int &num_dsp, int &num_aip,
+-                                        int &num_gpu, int &num_cpu,
++  static void soc_offline_core_instance(int &num_dsp,
++                                        int &num_gpu, int &num_cpu, int &num_gpu_fp16,
+                                         std::string &delegate);
+   static int soc_num_inits();
+ 
+diff --git a/mobile_back_qti/docker/mlperf_dlc_prepare/Dockerfile b/mobile_back_qti/docker/mlperf_dlc_prepare/Dockerfile
+new file mode 100644
+index 0000000..321d399
+--- /dev/null
++++ b/mobile_back_qti/docker/mlperf_dlc_prepare/Dockerfile
+@@ -0,0 +1,26 @@
++# Docker image name: mlcommons/mlperf_dlc_prepare
++FROM ubuntu:focal
++LABEL maintainer="quic_mmundhra@quicinc.com"
++
++# Update the apt configuration and set timezone first or image creation waits
++# for selection of timezone
++RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
++    apt-get install -y --no-install-recommends tzdata
++
++RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
++    apt-get install -y --no-install-recommends \
++       python3 python3-pip libpython3.8-dev python3.8-venv libgl1-mesa-glx libglib2.0-0 cython3 gcc make curl unzip libc++1-8 \
++       git locales openssh-client ca-certificates tar gzip parallel \
++       zip bzip2 gnupg wget python3-six python3-pip libncurses5 openjdk-11-jdk-headless clang-format-10 golang-1.13-go build-essential
++
++RUN pip3 install pip==19.3.1 setuptools==31.0.1
++RUN pip3 install tensorflow-cpu==2.6.2
++RUN pip3 install protobuf==3.20.3
++RUN pip3 install Pillow opencv-python==4.3.0.38 setuptools matplotlib tensorflow_hub tf-slim \
++                 absl-py numpy pyyaml
++
++RUN ln -s /usr/bin/python3 /usr/bin/python
++RUN apt-get clean
++
++RUN mkdir -p /home/mlperf && chmod 777 /home/mlperf
++ENV HOME /home/mlperf
+diff --git a/mobile_back_qti/docker/mlperf_mosaic/Dockerfile b/mobile_back_qti/docker/mlperf_mosaic/Dockerfile
+index 4e76710..34401a7 100644
+--- a/mobile_back_qti/docker/mlperf_mosaic/Dockerfile
++++ b/mobile_back_qti/docker/mlperf_mosaic/Dockerfile
+@@ -1,4 +1,26 @@
+-FROM tensorflow/tensorflow:2.6.0
+-LABEL maintainer="quic_mcharleb@quicinc.com"
++# Docker image name: mlperf_mosaic_docker
++FROM ubuntu:focal
++LABEL maintainer="quic_mmundhra@quicinc.com"
+ 
+-RUN pip3 install pyyaml
+\ No newline at end of file
++# Update the apt configuration and set timezone first or image creation waits
++# for selection of timezone
++RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
++    apt-get install -y --no-install-recommends tzdata
++
++RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
++    apt-get install -y --no-install-recommends \
++       python3 python3-pip libpython3.8-dev python3.8-venv libgl1-mesa-glx libglib2.0-0 cython3 gcc make curl unzip libc++1-8 \
++       git locales openssh-client ca-certificates tar gzip parallel \
++       zip bzip2 gnupg wget python3-six python3-pip libncurses5 openjdk-11-jdk-headless clang-format-10 golang-1.13-go
++
++RUN pip3 install pip==19.3.1 setuptools==31.0.1
++RUN pip3 install tensorflow-cpu==2.6.0
++RUN pip3 install protobuf==3.20.3
++RUN pip3 install Pillow setuptools matplotlib tensorflow_hub tf-slim \
++                 absl-py numpy pyyaml
++
++RUN ln -s /usr/bin/python3 /usr/bin/python
++RUN apt-get clean
++
++RUN mkdir -p /home/mlperf && chmod 777 /home/mlperf
++ENV HOME /home/mlperf
+diff --git a/mobile_back_qti/docker/mlperf_snusr/Dockerfile b/mobile_back_qti/docker/mlperf_snusr/Dockerfile
+index df27937..6edaaad 100644
+--- a/mobile_back_qti/docker/mlperf_snusr/Dockerfile
++++ b/mobile_back_qti/docker/mlperf_snusr/Dockerfile
+@@ -1,6 +1,6 @@
+ # Docker image name: mlperf_snusr_docker
+-FROM ubuntu:bionic
+-LABEL maintainer="quic_aasheesh@quicinc.com"
++FROM ubuntu:focal
++LABEL maintainer="quic_mmundhra@quicinc.com"
+ 
+ # Update the apt configuration and set timezone first or image creation waits
+ # for selection of timezone
+@@ -9,86 +9,18 @@ RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
+ 
+ RUN apt-get update && apt-get upgrade -y && apt-get autoremove -y && \
+     apt-get install -y --no-install-recommends \
+-       python3 python3-pip libpython3.6-dev python3.6-venv libgl1-mesa-glx libglib2.0 cython3 gcc make curl unzip libc++1-8 \
++       python3 python3-pip libpython3.8-dev python3.8-venv libgl1-mesa-glx libglib2.0-0 cython3 gcc make curl unzip libc++1-8 \
+        git locales openssh-client ca-certificates tar gzip parallel \
+        zip bzip2 gnupg wget python3-six python3-pip libncurses5 openjdk-11-jdk-headless clang-format-10 golang-1.13-go
+ 
+ RUN pip3 install pip==19.3.1 setuptools==31.0.1
+ RUN pip3 install tensorflow-cpu==2.4.4
++RUN pip3 install protobuf==3.20.3
+ RUN pip3 install Pillow setuptools matplotlib tensorflow_hub tf-slim \
+                  absl-py numpy pyyaml
+ 
+ RUN ln -s /usr/bin/python3 /usr/bin/python
+ RUN apt-get clean
+ 
+-# Protoc 3.6.1
+-RUN curl -OL https://github.com/google/protobuf/releases/download/v3.6.1/protoc-3.6.1-linux-x86_64.zip && \
+-    unzip protoc-3.6.1-linux-x86_64.zip -d protoc3 && \
+-    mv protoc3/bin/* /usr/local/bin/ && \
+-    mv protoc3/include/* /usr/local/include/ && \
+-    rm -rf protoc-3.6.1-linux-x86_64.zip protoc3
+-
+-# Install bazel
+-RUN echo "deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8" | tee /etc/apt/sources.list.d/bazel.list
+-RUN curl https://bazel.build/bazel-release.pub.gpg | apt-key add -
+-RUN apt-get update && \
+-    apt-get install -y --allow-unauthenticated bazel-3.7.2
+-RUN apt-get clean
+-
+-# Set timezone to UTC by default
+-RUN ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime
+-
+-# Use unicode
+-RUN locale-gen en_US.UTF-8 || true
+-ENV LANG=en_US.UTF-8
+-
+-ARG android_home=/opt/android/sdk
+-
+-# Install Android SDK and NDK
+-RUN mkdir -p ${android_home} && \
+-    wget -O /tmp/sdk_tools.zip https://dl.google.com/android/repository/commandlinetools-linux-7583922_latest.zip && \
+-    unzip -q /tmp/sdk_tools.zip -d ${android_home}/cmdline-tools/ && \
+-    mv ${android_home}/cmdline-tools/cmdline-tools ${android_home}/cmdline-tools/tools && \
+-    rm /tmp/sdk_tools.zip
+-
+-# Set environment variables
+-ENV ANDROID_HOME ${android_home}
+-ENV ANDROID_NDK_HOME ${android_ndk_home}
+-ENV ADB_INSTALL_TIMEOUT 120
+-ENV PATH=${ANDROID_HOME}/emulator:${ANDROID_HOME}/cmdline-tools/tools/bin:${ANDROID_HOME}/tools/bin:${ANDROID_HOME}/build-tools/29.0.3:${PATH}
+-
+-RUN mkdir ~/.android && echo '### User Sources for Android SDK Manager' > ~/.android/repositories.cfg
+-
+-# Update SDK manager and install system image, platform and build tools
+-RUN yes | sdkmanager --licenses && sdkmanager --update
+-RUN yes | sdkmanager \
+-    "tools" \
+-    "platform-tools" \
+-    "extras;android;m2repository" \
+-    "extras;google;m2repository" \
+-    "extras;google;google_play_services" \
+-    "build-tools;29.0.3"
+-
+-ARG android_version=30
+-RUN sdkmanager "platforms;android-${android_version}" "cmake;3.6.4111459"
+-
+-ARG ndk_version=android-ndk-r21e
+-ARG android_ndk_home=/opt/android/${ndk_version}
+-
+-# Install the NDK
+-# Use wget instead of curl to avoid "Error in the HTTP2 framing layer"
+-RUN cd /tmp &&  wget -nv https://dl.google.com/android/repository/${ndk_version}-linux-x86_64.zip && \
+-    unzip -q /tmp/${ndk_version}-linux-x86_64.zip -d /opt/android && \
+-    rm /tmp/${ndk_version}-linux-x86_64.zip
+-
+-ENV ANDROID_NDK_HOME ${android_ndk_home}
+-
+-# Add Java format checker and buildifier
+-ENV GOBIN /opt/formatters/bin
+-RUN mkdir -p ${GOBIN} && curl --output `dirname ${GOBIN}`/google-java-format-1.9-all-deps.jar -L https://github.com/google/google-java-format/releases/download/google-java-format-1.9/google-java-format-1.9-all-deps.jar
+-RUN /usr/lib/go-1.13/bin/go get github.com/bazelbuild/buildtools/buildifier
+-ENV PATH=${PATH}:${GOBIN}
+-
+ RUN mkdir -p /home/mlperf && chmod 777 /home/mlperf
+ ENV HOME /home/mlperf
+-ENV JAVA_HOME /usr/lib/jvm/java-11-openjdk-amd64
+diff --git a/mobile_back_qti/make/qti_backend.mk b/mobile_back_qti/make/qti_backend.mk
+index 60a62e8..75658b4 100644
+--- a/mobile_back_qti/make/qti_backend.mk
++++ b/mobile_back_qti/make/qti_backend.mk
+@@ -19,28 +19,28 @@ else ifeq ($(WITH_QTI),$(filter $(WITH_QTI),1 2))
+     backend_qti_flutter_docker_args=-v "${SNPE_SDK}:/mnt/project/mobile_back_qti/$(shell basename ${SNPE_SDK})"
+   endif
+   $(info WITH_QTI=$(WITH_QTI))
+-  local_snpe_sdk_root=$(shell echo mobile_back_qti/snpe-* | awk '{print $$NF}')
++  local_snpe_sdk_root=$(shell echo mobile_back_qti/qaisw-* | awk '{print $$NF}')
+   $(info detected SNPE SDK: ${local_snpe_sdk_root})
+   backend_qti_android_files=${BAZEL_LINKS_PREFIX}bin/mobile_back_qti/cpp/backend_qti/libqtibackend.so \
+-    ${BAZEL_LINKS_PREFIX}bin/flutter/android/commonlibs/lib_arm64/libc++_shared.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSNPE.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpV73Stub.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpV69Stub.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpV68Stub.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpPrepare.so \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV73Skel.so \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV69Skel.so \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV68Skel.so
++    ${local_snpe_sdk_root}/lib/aarch64-android_patched/libc++_qti.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSNPE.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpV73Stub.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpV69Stub.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpV68Stub.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpPrepare.so \
++    ${local_snpe_sdk_root}/lib/hexagon-v73/unsigned/libSnpeHtpV73Skel.so \
++    ${local_snpe_sdk_root}/lib/hexagon-v69/unsigned/libSnpeHtpV69Skel.so \
++    ${local_snpe_sdk_root}/lib/hexagon-v68/unsigned/libSnpeHtpV68Skel.so
+   backend_qti_cmdline_files=${BAZEL_LINKS_PREFIX}bin/mobile_back_qti/cpp/backend_qti/libqtibackend.so \
+-    ${BAZEL_LINKS_PREFIX}bin/flutter/android/commonlibs/lib_arm64/libc++_shared.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSNPE.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpV73Stub.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpV69Stub.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpV68Stub.so \
+-    ${local_snpe_sdk_root}/lib/aarch64-android-clang8.0/libSnpeHtpPrepare.so \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV73Skel.so \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV69Skel.so \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV68Skel.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android/libc++_shared.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android/libSNPE.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android/libSnpeHtpV73Stub.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android/libSnpeHtpV69Stub.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android/libSnpeHtpV68Stub.so \
++    ${local_snpe_sdk_root}/lib/aarch64-android/libSnpeHtpPrepare.so \
++    ${local_snpe_sdk_root}/lib/hexagon-v73/unsigned/libSnpeHtpV73Skel.so \
++    ${local_snpe_sdk_root}/lib/hexagon-v69/unsigned/libSnpeHtpV69Skel.so \
++    ${local_snpe_sdk_root}/lib/hexagon-v68/unsigned/libSnpeHtpV68Skel.so \
+     mobile_back_qti/run_accuracy_tests.sh \
+     mobile_back_qti/run_performance_tests.sh
+   backend_qti_android_target=//mobile_back_qti/cpp/backend_qti:libqtibackend.so \
+@@ -50,11 +50,28 @@ else ifeq ($(WITH_QTI),$(filter $(WITH_QTI),1 2))
+   endif
+ 
+   backend_qti_windows_files=${BAZEL_LINKS_PREFIX}bin/mobile_back_qti/cpp/backend_qti/libqtibackend.dll \
+-    ${local_snpe_sdk_root}/lib/aarch64-windows-vc19/SNPE.dll \
+-    ${local_snpe_sdk_root}/lib/aarch64-windows-vc19/SnpeHtpV68Stub.dll \
+-    ${local_snpe_sdk_root}/lib/dsp/libSnpeHtpV68Skel.so \
++    ${local_snpe_sdk_root}/lib/aarch64-windows-msvc/SNPE.dll \
++    ${local_snpe_sdk_root}/lib/aarch64-windows-msvc/SnpeHtpV68Stub.dll \
++    ${local_snpe_sdk_root}/lib/aarch64-windows-msvc/SnpeHtpPrepare.dll \
++    ${local_snpe_sdk_root}/lib/hexagon-v68/unsigned/libSnpeHtpV68Skel.so \
+     mobile_back_qti/run_performance_tests.bat \
+     mobile_back_qti/run_accuracy_tests.bat
+   backend_qti_windows_target=//mobile_back_qti/cpp/backend_qti:libqtibackend.dll
+   backend_qti_filename=libqtibackend
+ endif
++
++.PHONY: flutter/libqtibackend/patchlibs
++flutter/libqtibackend/patchlibs:
++ifeq ($(WITH_QTI),)
++  $(info not patching libs)
++else ifeq ($(WITH_QTI),$(filter $(WITH_QTI),1 2))
++	rm -rf ${local_snpe_sdk_root}/lib/aarch64-android_patched
++	cp -r ${local_snpe_sdk_root}/lib/aarch64-android ${local_snpe_sdk_root}/lib/aarch64-android_patched
++	patchelf --replace-needed libc++_shared.so libc++_qti.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSNPE.so
++	patchelf --replace-needed libc++_shared.so libc++_qti.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpV73Stub.so
++	patchelf --replace-needed libc++_shared.so libc++_qti.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpV69Stub.so
++	patchelf --replace-needed libc++_shared.so libc++_qti.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpV68Stub.so
++	patchelf --replace-needed libc++_shared.so libc++_qti.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libSnpeHtpPrepare.so
++	patchelf --set-soname libfoo.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libc++_shared.so
++	mv ${local_snpe_sdk_root}/lib/aarch64-android_patched/libc++_shared.so ${local_snpe_sdk_root}/lib/aarch64-android_patched/libc++_qti.so
++endif
+\ No newline at end of file
+diff --git a/mobile_back_qti/make/qti_docker_intialization.mk b/mobile_back_qti/make/qti_docker_intialization.mk
+new file mode 100644
+index 0000000..f0792b6
+--- /dev/null
++++ b/mobile_back_qti/make/qti_docker_intialization.mk
+@@ -0,0 +1,21 @@
++# Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++##########################################################################
++
++ifeq (${WITH_INTERNAL_DOCKER_OPTION},1)
++host_ip=$(shell nslookup docker-registry.qualcomm.com | grep -n Address | grep ^8 | cut -c12-)
++internal_docker_option=--add-host=docker:${host_ip}
++else
++internal_docker_option=
++endif
+\ No newline at end of file
+diff --git a/mobile_back_qti/run_accuracy_tests.bat b/mobile_back_qti/run_accuracy_tests.bat
+index 8e80912..8af5f20 100644
+--- a/mobile_back_qti/run_accuracy_tests.bat
++++ b/mobile_back_qti/run_accuracy_tests.bat
+@@ -16,7 +16,7 @@ REM # limitations under the License.
+ REM ##########################################################################
+ set /A cooldown_period=5
+ set /A min_query=1000
+-set /A min_duration=60000
++set /A min_duration_ms=60000
+ set results_prefix=accuracy_results_
+ set results_suffix=.txt
+ set test_case_suffix=_accuracy_logs
+@@ -50,7 +50,7 @@ if %models_path%=="" (
+ set test_case=image_classification
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL imagenet --mode=AccuracyOnly --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\imagenet\imagenet_val_full.txt --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL imagenet --mode=AccuracyOnly --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\imagenet\imagenet_val_full.txt --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr "Accuracy" %use_case_results_file% >> %results_file%
+ timeout /t %cooldown_period% /nobreak
+@@ -58,7 +58,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=object_detection
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL coco --mode=AccuracyOnly --images_directory=%dataset_path%\coco\img --offset=1   --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\coco\coco_val_full.pbtxt --model_file=%models_path%\ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. --num_classes=91 > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL coco --mode=AccuracyOnly --images_directory=%dataset_path%\coco\img --offset=1   --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\coco\coco_val_full.pbtxt --model_file=%models_path%\ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. --num_classes=91 > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr "Accuracy" %use_case_results_file% >> %results_file%
+ timeout /t %cooldown_period% /nobreak
+@@ -66,7 +66,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=image_segmentation
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL ade20k --mode=AccuracyOnly --images_directory=%dataset_path%\ade20k\images --num_class=31 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --ground_truth_directory=%dataset_path%\ade20k\annotations --model_file=%models_path%\mobile_mosaic_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL ade20k --mode=AccuracyOnly --images_directory=%dataset_path%\ade20k\images --num_class=31 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --ground_truth_directory=%dataset_path%\ade20k\annotations --model_file=%models_path%\mobile_mosaic_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr "Accuracy" %use_case_results_file% >> %results_file%
+ timeout /t %cooldown_period% /nobreak
+@@ -74,7 +74,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=language_understanding
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL squad --mode=AccuracyOnly --input_file=%dataset_path%\squad\squad_eval.tfrecord --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\squad\squad_groundtruth.tfrecord --model_file=%models_path%\mobilebert_quantized_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL squad --mode=AccuracyOnly --input_file=%dataset_path%\squad\squad_eval.tfrecord --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\squad\squad_groundtruth.tfrecord --model_file=%models_path%\mobilebert_quantized_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr "Accuracy" %use_case_results_file% >> %results_file%
+ timeout /t %cooldown_period% /nobreak
+@@ -82,7 +82,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=super_resolution
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL SNUSR --mode=AccuracyOnly --images_directory=%dataset_path%\snusr\lr --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --ground_truth_directory=%dataset_path%\snusr\hr --model_file=%models_path%\snusr_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL SNUSR --mode=AccuracyOnly --images_directory=%dataset_path%\snusr\lr --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --ground_truth_directory=%dataset_path%\snusr\hr --model_file=%models_path%\snusr_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr "Accuracy" %use_case_results_file% >> %results_file%
+ timeout /t %cooldown_period% /nobreak
+@@ -90,7 +90,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=image_classification_offline
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL imagenet --mode=AccuracyOnly --scenario=Offline --batch_size=12288 --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=24576 --min_duration=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\imagenet\imagenet_val_full.txt --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file%  2>&1
++.\main.exe EXTERNAL imagenet --mode=AccuracyOnly --scenario=Offline --batch_size=12288 --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=24576 --min_duration_ms=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path%\imagenet\imagenet_val_full.txt --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp_batched_8.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file%  2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr "Accuracy" %use_case_results_file% >> %results_file%
+ 
+diff --git a/mobile_back_qti/run_accuracy_tests.sh b/mobile_back_qti/run_accuracy_tests.sh
+index 43163f3..7779eb6 100644
+--- a/mobile_back_qti/run_accuracy_tests.sh
++++ b/mobile_back_qti/run_accuracy_tests.sh
+@@ -17,7 +17,7 @@
+ 
+ export cooldown_period=5
+ export min_query=1000
+-export min_duration=60000
++export min_duration_ms=60000
+ export results_prefix=accuracy_results_
+ export results_suffix=.txt
+ export test_case_suffix=_accuracy_logs
+@@ -57,7 +57,7 @@ fi
+ export test_case=image_classification
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL imagenet --mode=AccuracyOnly --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/imagenet/imagenet_val_full.txt --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL imagenet --mode=AccuracyOnly --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/imagenet/imagenet_val_full.txt --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Accuracy" $use_case_results_file >> $results_file
+ sleep $cooldown_period
+@@ -65,7 +65,7 @@ sleep $cooldown_period
+ export test_case=object_detection
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL coco --mode=AccuracyOnly --images_directory=$dataset_path/coco/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/coco/coco_val_full.pbtxt --model_file=$models_path/ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. --num_classes=91 > $use_case_results_file 2>&1
++./main EXTERNAL coco --mode=AccuracyOnly --images_directory=$dataset_path/coco/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/coco/coco_val_full.pbtxt --model_file=$models_path/ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. --num_classes=91 > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Accuracy" $use_case_results_file >> $results_file
+ sleep $cooldown_period
+@@ -73,7 +73,7 @@ sleep $cooldown_period
+ export test_case=image_segmentation
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL ade20k --mode=AccuracyOnly --images_directory=$dataset_path/ade20k/images --num_class=31 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --ground_truth_directory=$dataset_path/ade20k/annotations --model_file=$models_path/mobile_mosaic_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL ade20k --mode=AccuracyOnly --images_directory=$dataset_path/ade20k/images --num_class=31 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --ground_truth_directory=$dataset_path/ade20k/annotations --model_file=$models_path/mobile_mosaic_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Accuracy" $use_case_results_file >> $results_file
+ sleep $cooldown_period
+@@ -81,7 +81,7 @@ sleep $cooldown_period
+ export test_case=language_understanding
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL squad --mode=AccuracyOnly --input_file=$dataset_path/squad/squad_eval.tfrecord --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/squad/squad_groundtruth.tfrecord --model_file=$models_path/mobilebert_quantized_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL squad --mode=AccuracyOnly --input_file=$dataset_path/squad/squad_eval.tfrecord --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/squad/squad_groundtruth.tfrecord --model_file=$models_path/mobilebert_quantized_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Accuracy" $use_case_results_file >> $results_file
+ sleep $cooldown_period
+@@ -89,7 +89,7 @@ sleep $cooldown_period
+ export test_case=super_resolution
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL SNUSR --mode=AccuracyOnly --images_directory=$dataset_path/snusr/lr --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --ground_truth_directory=$dataset_path/snusr/hr --model_file=$models_path/snusr_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL SNUSR --mode=AccuracyOnly --images_directory=$dataset_path/snusr/lr --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --ground_truth_directory=$dataset_path/snusr/hr --model_file=$models_path/snusr_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Accuracy" $use_case_results_file >> $results_file
+ sleep $cooldown_period
+@@ -97,6 +97,6 @@ sleep $cooldown_period
+ export test_case=image_classification_offline
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL imagenet --mode=AccuracyOnly --scenario=Offline --batch_size=12288 --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=24576 --min_duration=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/imagenet/imagenet_val_full.txt --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL imagenet --mode=AccuracyOnly --scenario=Offline --batch_size=12288 --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=24576 --min_duration_ms=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file=$dataset_path/imagenet/imagenet_val_full.txt --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Accuracy" $use_case_results_file >> $results_file
+diff --git a/mobile_back_qti/run_performance_tests.bat b/mobile_back_qti/run_performance_tests.bat
+index 694344c..b5ba4bf 100644
+--- a/mobile_back_qti/run_performance_tests.bat
++++ b/mobile_back_qti/run_performance_tests.bat
+@@ -17,7 +17,7 @@ REM ##########################################################################
+ 
+ set /A cooldown_period=300
+ set /A min_query=1000
+-set /A min_duration=60000
++set /A min_duration_ms=60000
+ set results_prefix=performance_results_
+ set results_suffix=.txt
+ set test_case_suffix=_performance_logs
+@@ -51,7 +51,7 @@ if %models_path%=="" (
+ set test_case=image_classification
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL imagenet --mode=PerformanceOnly --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path% --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL imagenet --mode=PerformanceOnly --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path% --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr /C:"90th percentile latency (ns)" %use_case_results_file% >> %results_file%
+ findstr /C:"Result is" %use_case_results_file% >> %results_file%
+@@ -61,7 +61,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=object_detection
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL coco --mode=PerformanceOnly --images_directory=%dataset_path%\coco\img --offset=1   --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path% --model_file=%models_path%\ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. --num_classes=91 > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL coco --mode=PerformanceOnly --images_directory=%dataset_path%\coco\img --offset=1   --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path% --model_file=%models_path%\ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. --num_classes=91 > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr /C:"90th percentile latency (ns)" %use_case_results_file% >> %results_file%
+ findstr /C:"Result is" %use_case_results_file% >> %results_file%
+@@ -71,7 +71,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=image_segmentation
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL ade20k --mode=PerformanceOnly --images_directory=%dataset_path%\ade20k\images --num_class=31 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --ground_truth_directory= --model_file=%models_path%\mobile_mosaic_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL ade20k --mode=PerformanceOnly --images_directory=%dataset_path%\ade20k\images --num_class=31 --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --ground_truth_directory= --model_file=%models_path%\mobile_mosaic_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr /C:"90th percentile latency (ns)" %use_case_results_file% >> %results_file%
+ findstr /C:"Result is" %use_case_results_file% >> %results_file%
+@@ -81,7 +81,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=language_understanding
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL squad --mode=PerformanceOnly --input_file=%dataset_path%\squad\squad_eval_mini.tfrecord --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --groundtruth_file= --model_file=%models_path%\mobilebert_quantized_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL squad --mode=PerformanceOnly --input_file=%dataset_path%\squad\squad_eval_mini.tfrecord --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --groundtruth_file= --model_file=%models_path%\mobilebert_quantized_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr /C:"90th percentile latency (ns)" %use_case_results_file% >> %results_file%
+ findstr /C:"Result is" %use_case_results_file% >> %results_file%
+@@ -91,7 +91,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=super_resolution
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL SNUSR --mode=PerformanceOnly --images_directory=%dataset_path%\snusr\lr --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration=%min_duration% --single_stream_expected_latency_ns=1000000 --ground_truth_directory=. --model_file=%models_path%\snusr_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL SNUSR --mode=PerformanceOnly --images_directory=%dataset_path%\snusr\lr --output_dir=%test_case%%test_case_suffix% --min_query_count=%min_query% --min_duration_ms=%min_duration_ms% --single_stream_expected_latency_ns=1000000 --ground_truth_directory=. --model_file=%models_path%\snusr_htp.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr /C:"90th percentile latency (ns)" %use_case_results_file% >> %results_file%
+ findstr /C:"Result is" %use_case_results_file% >> %results_file%
+@@ -101,7 +101,7 @@ timeout /t %cooldown_period% /nobreak
+ set test_case=image_classification_offline
+ mkdir %test_case%%test_case_suffix%
+ set use_case_results_file=%results_prefix%%test_case%%results_suffix%
+-.\main.exe EXTERNAL imagenet --mode=PerformanceOnly --scenario=Offline --batch_size=12288 --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=24576 --min_duration=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path% --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
++.\main.exe EXTERNAL imagenet --mode=PerformanceOnly --scenario=Offline --batch_size=12288 --images_directory=%dataset_path%\imagenet\img --offset=1 --output_dir=%test_case%%test_case_suffix% --min_query_count=24576 --min_duration_ms=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file=%dataset_path% --model_file=%models_path%\mobilenet_edgetpu_224_1.0_htp_batched_8.dlc --lib_path=libqtibackend.dll --native_lib_path=. > %use_case_results_file% 2>&1
+ echo #######%test_case%###### >> %results_file%
+ findstr /C:"Result is" %use_case_results_file% >> %results_file%
+ findstr /C:"Samples per second" %use_case_results_file% >> %results_file%
+diff --git a/mobile_back_qti/run_performance_tests.sh b/mobile_back_qti/run_performance_tests.sh
+index 20c70e2..4ae8a7c 100644
+--- a/mobile_back_qti/run_performance_tests.sh
++++ b/mobile_back_qti/run_performance_tests.sh
+@@ -18,7 +18,7 @@
+ 
+ export cooldown_period=300
+ export min_query=1000
+-export min_duration=60000
++export min_duration_ms=60000
+ export results_prefix=performance_results_
+ export results_suffix=.txt
+ export test_case_suffix=_performance_logs
+@@ -58,7 +58,7 @@ fi
+ export test_case=image_classification
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL imagenet --mode=PerformanceOnly --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --groundtruth_file="" --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL imagenet --mode=PerformanceOnly --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --groundtruth_file="" --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "90th percentile latency (ns)" $use_case_results_file >> $results_file
+ grep "Result is" $use_case_results_file >> $results_file
+@@ -68,7 +68,7 @@ sleep $cooldown_period
+ export test_case=object_detection
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL coco --mode=PerformanceOnly --images_directory=$dataset_path/coco/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --groundtruth_file="" --model_file=$models_path/ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. --num_classes=91 > $use_case_results_file 2>&1
++./main EXTERNAL coco --mode=PerformanceOnly --images_directory=$dataset_path/coco/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --groundtruth_file="" --model_file=$models_path/ssd_mobiledet_qat_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. --num_classes=91 > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "90th percentile latency (ns)" $use_case_results_file >> $results_file
+ grep "Result is" $use_case_results_file >> $results_file
+@@ -78,7 +78,7 @@ sleep $cooldown_period
+ export test_case=image_segmentation
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL ade20k --mode=PerformanceOnly --images_directory=$dataset_path/ade20k/images --num_class=31 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --ground_truth_directory= --model_file=$models_path/mobile_mosaic_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL ade20k --mode=PerformanceOnly --images_directory=$dataset_path/ade20k/images --num_class=31 --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --ground_truth_directory= --model_file=$models_path/mobile_mosaic_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "90th percentile latency (ns)" $use_case_results_file >> $results_file
+ grep "Result is" $use_case_results_file >> $results_file
+@@ -88,7 +88,7 @@ sleep $cooldown_period
+ export test_case=language_understanding
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL squad --mode=PerformanceOnly --input_file=$dataset_path/squad/squad_eval_mini.tfrecord --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --groundtruth_file= --model_file=$models_path/mobilebert_quantized_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL squad --mode=PerformanceOnly --input_file=$dataset_path/squad/squad_eval_mini.tfrecord --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --groundtruth_file= --model_file=$models_path/mobilebert_quantized_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "90th percentile latency (ns)" $use_case_results_file >> $results_file
+ grep "Result is" $use_case_results_file >> $results_file
+@@ -98,7 +98,7 @@ sleep $cooldown_period
+ export test_case=super_resolution
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL SNUSR --mode=PerformanceOnly --images_directory=$dataset_path/snusr/lr --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration=$min_duration --single_stream_expected_latency_ns=1000000 --ground_truth_directory= --model_file=$models_path/snusr_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL SNUSR --mode=PerformanceOnly --images_directory=$dataset_path/snusr/lr --output_dir=$test_case$test_case_suffix --min_query_count=$min_query --min_duration_ms=$min_duration_ms --single_stream_expected_latency_ns=1000000 --ground_truth_directory= --model_file=$models_path/snusr_htp.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "90th percentile latency (ns)" $use_case_results_file >> $results_file
+ grep "Result is" $use_case_results_file >> $results_file
+@@ -108,7 +108,7 @@ sleep $cooldown_period
+ export test_case=image_classification_offline
+ mkdir -p $test_case$test_case_suffix
+ export use_case_results_file=$results_prefix$test_case$results_suffix
+-./main EXTERNAL imagenet --mode=PerformanceOnly --scenario=Offline --batch_size=12288 --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=24576 --min_duration=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file= --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp_batched_sd8pg1.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
++./main EXTERNAL imagenet --mode=PerformanceOnly --scenario=Offline --batch_size=12288 --images_directory=$dataset_path/imagenet/img --offset=1 --output_dir=$test_case$test_case_suffix --min_query_count=24576 --min_duration_ms=0 --single_stream_expected_latency_ns=1000000 --groundtruth_file= --model_file=$models_path/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc --lib_path=libqtibackend.so --native_lib_path=. > $use_case_results_file 2>&1
+ echo "#######$test_case######" >> $results_file
+ grep "Result is" $use_case_results_file >> $results_file
+ grep "Samples per second" $use_case_results_file >> $results_file
+diff --git a/mobile_back_qti/variables.bzl b/mobile_back_qti/variables.bzl
+index 8bd5a02..ef0704d 100644
+--- a/mobile_back_qti/variables.bzl
++++ b/mobile_back_qti/variables.bzl
+@@ -19,19 +19,19 @@ def _impl(repository_ctx):
+         # print(repository_ctx.attr.workspace_dir + "/mobile_back_qti/")
+         found = repository_ctx.execute(["ls", repository_ctx.attr.workspace_dir + "/mobile_back_qti"])
+         if found.return_code != 0 or found.stdout == "" or found.stdout == "\n":
+-            fail("snpe folder is not found in the repo: " + found.stderr)
++            fail("qaisw folder is not found in the repo: " + found.stderr)
+         filelist = found.stdout.split("\n")
+         filepath = ""
+         for x in filelist:
+-            if x.find("snpe-") == 0:
++            if x.find("qaisw-") == 0:
+                 filepath = x
+                 break
+         if filepath == "":
+-            fail("snpe folder is not found in the repo")
++            fail("qaisw folder is not found in the repo")
+     else:
+-        found = repository_ctx.execute(["find", repository_ctx.attr.workspace_dir + "/mobile_back_qti/", "-maxdepth", "1", "-name", "snpe-*", "-type", "d", "-print", "-quit"])
++        found = repository_ctx.execute(["find", repository_ctx.attr.workspace_dir + "/mobile_back_qti/", "-maxdepth", "1", "-name", "qaisw-*", "-type", "d", "-print", "-quit"])
+         if found.return_code != 0 or found.stdout == "" or found.stdout == "\n":
+-            fail("snpe folder is not found in the repo")
++            fail("qaisw folder is not found in the repo")
+         filepath = found.stdout[:-1]
+ 
+     sdk_version = filepath[found.stdout.rfind("/") + 1:]
+-- 
+2.25.1
+

@@ -1,0 +1,118 @@
+diff --git a/mobile_back_samsung/samsung/lib/BUILD b/mobile_back_samsung/samsung/lib/BUILD
+index 3a8e099..f913fcd 100644
+--- a/mobile_back_samsung/samsung/lib/BUILD
++++ b/mobile_back_samsung/samsung/lib/BUILD
+@@ -17,6 +17,7 @@ pbtxt2header(
+         "public/include/mbe_config_2100.pbtxt",
+         "public/include/mbe_config_2200.pbtxt",
+         "public/include/mbe_config_2300.pbtxt",
++        "public/include/mbe_config_2400.pbtxt"
+     ],
+ )
+ 
+@@ -34,6 +35,7 @@ cc_library(
+         "public/include/mbe_config_2100.hpp",
+         "public/include/mbe_config_2200.hpp",
+         "public/include/mbe_config_2300.hpp",
++        "public/include/mbe_config_2400.hpp",
+         "public/include/mbe_core_holder.hpp",
+         "public/include/mbe_helper.hpp",
+         "public/include/mbe_loader.hpp",
+diff --git a/mobile_back_samsung/samsung/lib/checksums.txt b/mobile_back_samsung/samsung/lib/checksums.txt
+index da9583c..c04417d 100644
+--- a/mobile_back_samsung/samsung/lib/checksums.txt
++++ b/mobile_back_samsung/samsung/lib/checksums.txt
+@@ -1,9 +1,10 @@
+ e2f78216c1a3e0d925e17e4d6e7befbc1a2a853867864c6f30e553bf971f2a42  internal/libc++.so
+ 34ce517c63720a6a858d4e0237247a4e6db857cc4a1f6dffe7210916b96fdc3b  internal/libeden_nn_on_system.so
+-10eac88456890b89dd20c3acc636467366b7e16e9a9cc0e57f4d8a9079a6633c  internal/libenn_extension.so
++f8a6c9d5c0e094c8ef84468ee535ff2f4604d9e59064925aa38cfdd200a06392  internal/libenn_extension.so
+ 97202acb183aa26d83f393d185f0f3cd94f648678916c6b27d91a8445f354472  internal/libenn_public_api_cpp.so
+ 6c15a0660334a81561342337500ad431441e68cb85aa26fd297e77f3c97b1f79  internal/libmbe1200_core.so
+ 109c4ea03357d7a0f901a44c86281f6fd6a0a84ea855ccdfef09aee06092a0ff  internal/libmbe2100_core.so
+ 180800b085d01098205599da04544fd5c666d1d6984e11fae51ea80bd392a52c  internal/libmbe2200_core.so
+ 0ba0fa2f8eb5d46116ed20d792134e6bacbff662a2a248596c953a7201a32a8d  internal/libmbe2300_core.so
++90f2b3b3c130ef71109ade8ab1d667fe8311c6a32030196c0f12a28d65b892cb  internal/libmbe2400_core.so
+ cc921615cd844b47871646b30f146048044b55cdb9bf17d3bd9c5f4569ec2efe  internal/libofi_rt_framework_user_vendor.so
+diff --git a/mobile_back_samsung/samsung/lib/public/include/mbe_config.hpp b/mobile_back_samsung/samsung/lib/public/include/mbe_config.hpp
+index 330b71d..16ce89b 100755
+--- a/mobile_back_samsung/samsung/lib/public/include/mbe_config.hpp
++++ b/mobile_back_samsung/samsung/lib/public/include/mbe_config.hpp
+@@ -28,4 +28,5 @@ limitations under the License.
+ #include "mbe_config_2100.hpp"
+ #include "mbe_config_2200.hpp"
+ #include "mbe_config_2300.hpp"
++#include "mbe_config_2400.hpp"
+ #endif
+diff --git a/mobile_back_samsung/samsung/lib/public/include/mbe_loader.hpp b/mobile_back_samsung/samsung/lib/public/include/mbe_loader.hpp
+index 1fc74d7..91467e7 100644
+--- a/mobile_back_samsung/samsung/lib/public/include/mbe_loader.hpp
++++ b/mobile_back_samsung/samsung/lib/public/include/mbe_loader.hpp
+@@ -33,6 +33,7 @@ std::string mbe_core_libs[CORE_MAX] = {
+     "libmbe2100_core.so",
+     "libmbe2200_core.so",
+     "libmbe2300_core.so",
++    "libmbe2400_core.so",
+ };
+ 
+ void* load_symbol(void* dl_handle, const char* name) {
+diff --git a/mobile_back_samsung/samsung/lib/public/include/mbe_utils.hpp b/mobile_back_samsung/samsung/lib/public/include/mbe_utils.hpp
+index c918010..16e60f3 100644
+--- a/mobile_back_samsung/samsung/lib/public/include/mbe_utils.hpp
++++ b/mobile_back_samsung/samsung/lib/public/include/mbe_utils.hpp
+@@ -31,6 +31,7 @@ enum DEVICE_ID {
+   SOC_2100,
+   SOC_2200,
+   SOC_2300,
++  SOC_2400,
+   CORE_MAX
+ };
+ 
+diff --git a/mobile_back_samsung/samsung/lib/public/mbe_core/mbe_helper.cc b/mobile_back_samsung/samsung/lib/public/mbe_core/mbe_helper.cc
+index aac99a1..c669a1b 100644
+--- a/mobile_back_samsung/samsung/lib/public/mbe_core/mbe_helper.cc
++++ b/mobile_back_samsung/samsung/lib/public/mbe_core/mbe_helper.cc
+@@ -81,6 +81,13 @@ static int get_core_id_from_model(const char *model) {
+   else if (strstr((char *)model, "ERD9935") ||
+            strstr((char *)model, "S5E9935") || strstr((char *)model, "S919O"))
+     core_id = SOC_2300;
++  else if (strstr((char *)model, "ERD9945") ||
++            strstr((char *)model, "S5E9945") ||
++            strstr((char *)model, "MU3S") ||
++            strstr((char *)model, "S921") ||
++            strstr((char *)model, "S926") ||
++            strstr((char *)model, "S928"))
++    core_id = SOC_2400;
+   else
+     return CORE_INVALID;
+   return retrieve_model_surfix(model, core_id) ? core_id : CORE_INVALID;
+@@ -98,6 +105,8 @@ static int get_core_id_from_hardware(const char *hardware) {
+     core_id = SOC_2200;
+   else if (strstr((char *)hardware, "9935"))
+     core_id = SOC_2300;
++  else if (strstr((char *)hardware, "9945"))
++    core_id = SOC_2400;
+   else
+     return CORE_INVALID;
+   return core_id;
+@@ -125,6 +134,8 @@ const char *core_ctrl::get_benchmark_config(int core_id) {
+     settings = mbe_config_2200_pbtxt.c_str();
+   } else if (core_id == SOC_2300) {
+     settings = mbe_config_2300_pbtxt.c_str();
++  } else if (core_id == SOC_2400) {
++    settings = mbe_config_2400_pbtxt.c_str();
+   }
+   return settings;
+ }
+diff --git a/mobile_back_samsung/samsung_backend.mk b/mobile_back_samsung/samsung_backend.mk
+index 599f951..9f4052b 100644
+--- a/mobile_back_samsung/samsung_backend.mk
++++ b/mobile_back_samsung/samsung_backend.mk
+@@ -25,6 +25,7 @@ ifeq (${WITH_SAMSUNG},1)
+ 		${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libenn_public_api_cpp.so \
+ 		${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libenn_extension.so \
+         ${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libmbe2300_core.so \
++        ${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libmbe2400_core.so \
+         ${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libmbe2200_core.so \
+         ${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libmbe2100_core.so \
+         ${MOBILE_BACK_SAMSUNG_LIB_ROOT}/internal/libmbe1200_core.so \

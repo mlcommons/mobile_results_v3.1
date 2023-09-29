@@ -1,0 +1,59 @@
+================================================
+MLPerf Results Summary
+================================================
+SUT name : snpe
+Scenario : SingleStream
+Mode     : PerformanceOnly
+90th percentile latency (ns) : 129506719
+Result is : VALID
+  Min duration satisfied : Yes
+  Min queries satisfied : Yes
+  Early stopping satisfied: Yes
+Early Stopping Result:
+ * Processed at least 64 queries (1024).
+ * Would discard 79 highest latency queries.
+ * Early stopping 90th percentile estimate: 130482083
+ * Early stopping 99th percentile estimate: 144543021
+
+================================================
+Additional Stats
+================================================
+QPS w/ loadgen overhead         : 8.06
+QPS w/o loadgen overhead        : 8.06
+
+Min latency (ns)                : 110835938
+Max latency (ns)                : 170294270
+Mean latency (ns)               : 124030899
+50.00 percentile latency (ns)   : 123750781
+90.00 percentile latency (ns)   : 129506719
+95.00 percentile latency (ns)   : 132015782
+97.00 percentile latency (ns)   : 134098282
+99.00 percentile latency (ns)   : 137146562
+99.90 percentile latency (ns)   : 148307239
+
+================================================
+Test Parameters Used
+================================================
+samples_per_query : 1
+target_qps : 1000
+target_latency (ns): 0
+max_async_queries : 1
+min_duration (ms): 60000
+max_duration (ms): 1800000
+min_query_count : 1024
+max_query_count : 0
+qsl_rng_seed : 148687905518835231
+sample_index_rng_seed : 520418551913322573
+schedule_rng_seed : 811580660758947900
+accuracy_log_rng_seed : 0
+accuracy_log_probability : 0
+accuracy_log_sampling_target : 0
+print_timestamps : 0
+performance_issue_unique : 0
+performance_issue_same : 0
+performance_issue_same_index : 0
+performance_sample_count : 635
+
+No warnings encountered during test.
+
+No errors encountered during test.

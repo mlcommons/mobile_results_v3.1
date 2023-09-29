@@ -1,0 +1,488 @@
+{
+  "meta": {
+    "uuid": "941a4ffd-40f9-484c-802d-38fa5b479d24",
+    "creation_date": "2023-09-04T11:47:02.781955",
+    "upload_date": null
+  },
+  "results": [
+    {
+      "benchmark_id": "image_classification",
+      "benchmark_name": "Image Classification",
+      "loadgen_scenario": "SingleStream",
+      "backend_settings": {
+        "accelerator_code": "snpe_dsp",
+        "accelerator_desc": "HTP",
+        "framework": "SNPE",
+        "delegate": "SNPE_DSP",
+        "model_path": "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp.dlc",
+        "batch_size": 1,
+        "extra_settings": [
+          {
+            "id": "num_threads",
+            "name": "Number of threads",
+            "value": "4",
+            "value_name": "4 threads"
+          },
+          {
+            "id": "profiling_level",
+            "name": "profile level",
+            "value": "off",
+            "value_name": "profile level"
+          }
+        ]
+      },
+      "backend_info": {
+        "filename": "libqtibackend",
+        "vendor_name": "QTI",
+        "backend_name": "snpe",
+        "accelerator_name": "HTP"
+      },
+      "performance_run": {
+        "throughput": {
+          "value": 2449.9175602740966
+        },
+        "accuracy": null,
+        "accuracy2": null,
+        "dataset": {
+          "name": "Open images subset for classification",
+          "type": "IMAGENET",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v0_7/datasets/imagenet.zip",
+          "groundtruth_path": ""
+        },
+        "measured_duration": 61.09332275390625,
+        "measured_samples": 148182,
+        "start_datetime": "2023-09-04T10:59:59.341945",
+        "loadgen_info": {
+          "validity": true,
+          "duration": 59.700749616
+        }
+      },
+      "accuracy_run": {
+        "throughput": null,
+        "accuracy": {
+          "normalized": 0.7529600262641907,
+          "formatted": "75.30%"
+        },
+        "accuracy2": null,
+        "dataset": {
+          "name": "Imagenet classification validation set",
+          "type": "IMAGENET",
+          "data_path": "local:///mlperf_datasets/imagenet/img",
+          "groundtruth_path": "local:///mlperf_datasets/imagenet/imagenet_val_full.txt"
+        },
+        "measured_duration": 436.9079284667969,
+        "measured_samples": 50000,
+        "start_datetime": "2023-09-04T11:30:13.504093",
+        "loadgen_info": null
+      },
+      "min_duration": 60.0,
+      "min_samples": 1024
+    },
+    {
+      "benchmark_id": "object_detection",
+      "benchmark_name": "Object Detection",
+      "loadgen_scenario": "SingleStream",
+      "backend_settings": {
+        "accelerator_code": "snpe_dsp",
+        "accelerator_desc": "HTP",
+        "framework": "SNPE",
+        "delegate": "SNPE_DSP",
+        "model_path": "local:///mlperf_models/ssd_mobiledet_qat_htp.dlc",
+        "batch_size": 1,
+        "extra_settings": [
+          {
+            "id": "num_threads",
+            "name": "Number of threads",
+            "value": "4",
+            "value_name": "4 threads"
+          },
+          {
+            "id": "profiling_level",
+            "name": "profile level",
+            "value": "off",
+            "value_name": "profile level"
+          }
+        ]
+      },
+      "backend_info": {
+        "filename": "libqtibackend",
+        "vendor_name": "QTI",
+        "backend_name": "snpe",
+        "accelerator_name": "HTP"
+      },
+      "performance_run": {
+        "throughput": {
+          "value": 1169.5906432748538
+        },
+        "accuracy": null,
+        "accuracy2": null,
+        "dataset": {
+          "name": "Open images subset for detection",
+          "type": "COCO",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v0_7/datasets/coco.zip",
+          "groundtruth_path": ""
+        },
+        "measured_duration": 61.43400573730469,
+        "measured_samples": 71353,
+        "start_datetime": "2023-09-04T11:06:00.575212",
+        "loadgen_info": {
+          "validity": true,
+          "duration": 59.8580317
+        }
+      },
+      "accuracy_run": {
+        "throughput": null,
+        "accuracy": {
+          "normalized": 0.27311232686042786,
+          "formatted": "0.2731 mAP"
+        },
+        "accuracy2": null,
+        "dataset": {
+          "name": "COCO 2017 validation set",
+          "type": "COCO",
+          "data_path": "local:///mlperf_datasets/coco/img",
+          "groundtruth_path": "local:///mlperf_datasets/coco/coco_val_full.pbtxt"
+        },
+        "measured_duration": 49.61624526977539,
+        "measured_samples": 5000,
+        "start_datetime": "2023-09-04T11:37:30.889736",
+        "loadgen_info": null
+      },
+      "min_duration": 60.0,
+      "min_samples": 1024
+    },
+    {
+      "benchmark_id": "image_segmentation_v2",
+      "benchmark_name": "v2.0 Image Segmentation",
+      "loadgen_scenario": "SingleStream",
+      "backend_settings": {
+        "accelerator_code": "snpe_dsp",
+        "accelerator_desc": "DSP",
+        "framework": "SNPE",
+        "delegate": "SNPE_DSP",
+        "model_path": "local:///mlperf_models/mobile_mosaic_htp.dlc",
+        "batch_size": 1,
+        "extra_settings": [
+          {
+            "id": "num_threads",
+            "name": "Number of threads",
+            "value": "4",
+            "value_name": "4 threads"
+          },
+          {
+            "id": "profiling_level",
+            "name": "profile level",
+            "value": "off",
+            "value_name": "profile level"
+          }
+        ]
+      },
+      "backend_info": {
+        "filename": "libqtibackend",
+        "vendor_name": "QTI",
+        "backend_name": "snpe",
+        "accelerator_name": "DSP"
+      },
+      "performance_run": {
+        "throughput": {
+          "value": 683.7849961161012
+        },
+        "accuracy": null,
+        "accuracy2": null,
+        "dataset": {
+          "name": "Open images subset for segmentation",
+          "type": "ADE20K",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v0_7/datasets/ade20k.zip",
+          "groundtruth_path": ""
+        },
+        "measured_duration": 62.38166046142578,
+        "measured_samples": 41721,
+        "start_datetime": "2023-09-04T11:12:02.198755",
+        "loadgen_info": {
+          "validity": true,
+          "duration": 59.919575037
+        }
+      },
+      "accuracy_run": {
+        "throughput": null,
+        "accuracy": {
+          "normalized": 0.5848329663276672,
+          "formatted": "0.5848 mIoU"
+        },
+        "accuracy2": null,
+        "dataset": {
+          "name": "ADE20K validation set",
+          "type": "ADE20K",
+          "data_path": "local:///mlperf_datasets/ade20k/images",
+          "groundtruth_path": "local:///mlperf_datasets/ade20k/annotations"
+        },
+        "measured_duration": 50.27602005004883,
+        "measured_samples": 2000,
+        "start_datetime": "2023-09-04T11:38:21.223998",
+        "loadgen_info": null
+      },
+      "min_duration": 60.0,
+      "min_samples": 1024
+    },
+    {
+      "benchmark_id": "natural_language_processing",
+      "benchmark_name": "Language Understanding",
+      "loadgen_scenario": "SingleStream",
+      "backend_settings": {
+        "accelerator_code": "snpe_dsp",
+        "accelerator_desc": "DSP",
+        "framework": "SNPE",
+        "delegate": "SNPE_DSP",
+        "model_path": "local:///mlperf_models/mobilebert_quantized_htp.dlc",
+        "batch_size": 1,
+        "extra_settings": [
+          {
+            "id": "num_threads",
+            "name": "Number of threads",
+            "value": "4",
+            "value_name": "4 threads"
+          },
+          {
+            "id": "profiling_level",
+            "name": "profile level",
+            "value": "off",
+            "value_name": "profile level"
+          }
+        ]
+      },
+      "backend_info": {
+        "filename": "libqtibackend",
+        "vendor_name": "QTI",
+        "backend_name": "snpe",
+        "accelerator_name": "DSP"
+      },
+      "performance_run": {
+        "throughput": {
+          "value": 120.41920816422963
+        },
+        "accuracy": null,
+        "accuracy2": null,
+        "dataset": {
+          "name": "Squad V1.1 mini set",
+          "type": "SQUAD",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v1_0/datasets/squad_eval_mini.tfrecord",
+          "groundtruth_path": ""
+        },
+        "measured_duration": 60.12513732910156,
+        "measured_samples": 7342,
+        "start_datetime": "2023-09-04T11:18:04.712151",
+        "loadgen_info": {
+          "validity": true,
+          "duration": 59.99496944999999
+        }
+      },
+      "accuracy_run": {
+        "throughput": null,
+        "accuracy": {
+          "normalized": 0.9440000653266907,
+          "formatted": "94.4000"
+        },
+        "accuracy2": null,
+        "dataset": {
+          "name": "Squad V1.1 validation set",
+          "type": "SQUAD",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v1_0/datasets/squad_eval_mini.tfrecord",
+          "groundtruth_path": "https://github.com/mlcommons/mobile_models/raw/main/v1_0/assets/squad_groundtruth.tfrecord"
+        },
+        "measured_duration": 0.8677319288253784,
+        "measured_samples": 100,
+        "start_datetime": "2023-09-04T11:39:11.648901",
+        "loadgen_info": null
+      },
+      "min_duration": 60.0,
+      "min_samples": 1024
+    },
+    {
+      "benchmark_id": "super_resolution",
+      "benchmark_name": "Super Resolution ",
+      "loadgen_scenario": "SingleStream",
+      "backend_settings": {
+        "accelerator_code": "snpe_dsp",
+        "accelerator_desc": "DSP",
+        "framework": "SNPE",
+        "delegate": "SNPE_DSP",
+        "model_path": "local:///mlperf_models//snusr_htp.dlc",
+        "batch_size": 1,
+        "extra_settings": [
+          {
+            "id": "num_threads",
+            "name": "Number of threads",
+            "value": "4",
+            "value_name": "4 threads"
+          },
+          {
+            "id": "profiling_level",
+            "name": "profile level",
+            "value": "off",
+            "value_name": "profile level"
+          }
+        ]
+      },
+      "backend_info": {
+        "filename": "libqtibackend",
+        "vendor_name": "QTI",
+        "backend_name": "snpe",
+        "accelerator_name": "DSP"
+      },
+      "performance_run": {
+        "throughput": {
+          "value": 74.4592989091117
+        },
+        "accuracy": null,
+        "accuracy2": null,
+        "dataset": {
+          "name": "SNUSR dataset for performance test",
+          "type": "SNUSR",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v3_1/datasets/snusr_lr_png.zip",
+          "groundtruth_path": ""
+        },
+        "measured_duration": 60.81519317626953,
+        "measured_samples": 4481,
+        "start_datetime": "2023-09-04T11:24:05.128474",
+        "loadgen_info": {
+          "validity": true,
+          "duration": 59.998721423
+        }
+      },
+      "accuracy_run": {
+        "throughput": null,
+        "accuracy": {
+          "normalized": 0.3348221182823181,
+          "formatted": "33.48 dB"
+        },
+        "accuracy2": null,
+        "dataset": {
+          "name": "SNUSR dataset for accuracy test",
+          "type": "SNUSR",
+          "data_path": "local:///mlperf_datasets/snusr/lr",
+          "groundtruth_path": "local:///mlperf_datasets/snusr/hr"
+        },
+        "measured_duration": 2.961357831954956,
+        "measured_samples": 25,
+        "start_datetime": "2023-09-04T11:39:13.576655",
+        "loadgen_info": null
+      },
+      "min_duration": 60.0,
+      "min_samples": 1024
+    },
+    {
+      "benchmark_id": "image_classification_offline",
+      "benchmark_name": "Image Classification (Offline)",
+      "loadgen_scenario": "Offline",
+      "backend_settings": {
+        "accelerator_code": "psnpe_dsp",
+        "accelerator_desc": "HTP",
+        "framework": "SNPE",
+        "delegate": "SNPE_DSP",
+        "model_path": "local:///mlperf_models/mobilenet_edgetpu_224_1.0_htp_batched_4.dlc",
+        "batch_size": 12288,
+        "extra_settings": [
+          {
+            "id": "num_threads",
+            "name": "Number of threads",
+            "value": "4",
+            "value_name": "4 threads"
+          },
+          {
+            "id": "profiling_level",
+            "name": "profile level",
+            "value": "off",
+            "value_name": "profile level"
+          }
+        ]
+      },
+      "backend_info": {
+        "filename": "libqtibackend",
+        "vendor_name": "QTI",
+        "backend_name": "snpe",
+        "accelerator_name": "HTP"
+      },
+      "performance_run": {
+        "throughput": {
+          "value": 3954.764479559589
+        },
+        "accuracy": null,
+        "accuracy2": null,
+        "dataset": {
+          "name": "Open images subset for classification",
+          "type": "IMAGENET",
+          "data_path": "https://github.com/mlcommons/mobile_models/raw/main/v0_7/datasets/imagenet.zip",
+          "groundtruth_path": ""
+        },
+        "measured_duration": 7.165412425994873,
+        "measured_samples": 24576,
+        "start_datetime": "2023-09-04T11:30:06.030652",
+        "loadgen_info": {
+          "validity": true,
+          "duration": 6.214276508
+        }
+      },
+      "accuracy_run": {
+        "throughput": null,
+        "accuracy": {
+          "normalized": 0.7529600262641907,
+          "formatted": "75.30%"
+        },
+        "accuracy2": null,
+        "dataset": {
+          "name": "Imagenet classification validation set",
+          "type": "IMAGENET",
+          "data_path": "local:///mlperf_datasets/imagenet/img",
+          "groundtruth_path": "local:///mlperf_datasets/imagenet/imagenet_val_full.txt"
+        },
+        "measured_duration": 465.37628173828125,
+        "measured_samples": 196608,
+        "start_datetime": "2023-09-04T11:39:16.592932",
+        "loadgen_info": null
+      },
+      "min_duration": 0.0,
+      "min_samples": 24576
+    }
+  ],
+  "environment_info": {
+    "platform": "android",
+    "value": {
+      "android": {
+        "os_version": "TKQ1.221114.001 test-keys",
+        "manufacturer": "Xiaomi",
+        "model_code": "23049RAD8C",
+        "model_name": "Redmi Note 12 Turbo",
+        "board_code": "marble",
+        "proc_cpuinfo_soc_name": "Unknown",
+        "props": [
+          {
+            "type": "socName",
+            "name": "ro.soc.model",
+            "value": "SM7475"
+          },
+          {
+            "type": "socManufacturer",
+            "name": "ro.soc.manufacturer",
+            "value": "QTI"
+          }
+        ]
+      },
+      "ios": null,
+      "windows": null
+    }
+  },
+  "build_info": {
+    "version": "3.1.0",
+    "build_number": "1",
+    "build_date": "2023-09-04T10:28:35.685653",
+    "official_release_flag": false,
+    "dev_test_flag": false,
+    "backend_list": [
+      "libqtibackend",
+      "libtflitebackend"
+    ],
+    "git_branch": "",
+    "git_commit": "",
+    "git_dirty_flag": false
+  }
+}

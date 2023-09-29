@@ -1,0 +1,7 @@
+{
+	"input_data_types": "Uint8",
+	 "retraining": "none",
+	 "starting_weights_filename": "https://github.com/mlcommons/mobile_open/blob/main/vision/edsr/models_and_checkpoints/tflite/f32b5_fp32.tflite",
+	 "weight_data_types": "int8",
+	 "weight_transformations": "code/edsr/Calibration_process.adoc"
+ }

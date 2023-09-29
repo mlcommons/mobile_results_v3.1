@@ -1,0 +1,17 @@
+{
+        "division": "closed",
+        "status": "SOC R&D",
+        "submitter": "Samsung Electronics",
+        "system_name": "Samsung Exynos 2400 ERD",
+        
+        "number_of_nodes": 1,
+        "host_processor_model_name": "Exynos 2400",
+        "host_processors_per_node": 1,
+        
+        "Accelerator_type_1": "NPU",
+        "Memory": "8 GB",
+        
+        "framework": "ENN 2.2.7",
+        "operating_system": "Android 14"
+}
+

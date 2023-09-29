@@ -1,0 +1,23 @@
+From 0743904de08cf515d2fd2a49a7b9f9cd0c916172 Mon Sep 17 00:00:00 2001
+From: Mohit Mundhra <quic_mmundhra@quicinc.com>
+Date: Wed, 6 Sep 2023 16:41:45 +0530
+Subject: [PATCH 2/2] Fix for invalid results for SD 4 Gen 2
+
+---
+ flutter/lib/app_constants.dart | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/flutter/lib/app_constants.dart b/flutter/lib/app_constants.dart
+index bd16ed6..989d2ed 100644
+--- a/flutter/lib/app_constants.dart
++++ b/flutter/lib/app_constants.dart
+@@ -110,5 +110,5 @@ class BackendId {
+ }
+ 
+ class BenchmarkSettings {
+-  static const double maxDuration = 10 * 60; // 10 minutes
++  static const double maxDuration = 50 * 60; // 50 minutes
+ }
+-- 
+2.25.1
+
